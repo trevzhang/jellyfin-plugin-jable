@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <meta name="referrer" content="no-referrer">
+  <title>Jable · Jellyfin</title>
+  <link rel="stylesheet" href="/Jable/Assets/jable.css">
+  <script type="module" src="/Jable/Assets/jable.mjs"></script>
+</head>
+<body>
+  <a class="skip-link" href="#catalog">跳到作品目录</a>
+  <header class="app-header">
+    <a class="back-link" href="/web/index.html" aria-label="返回 Jellyfin">← Jellyfin</a>
+    <h1>Jable</h1>
+    <span class="header-note">作品目录</span>
+  </header>
+  <main>
+    <div id="permission" class="notice error" role="alert" hidden></div>
+    <div id="controls">
+      <nav class="source-tabs" aria-label="作品来源">
+        <button type="button" data-source="All" aria-pressed="true">全部 <span lang="en">All</span></button>
+        <button type="button" data-source="Local" aria-pressed="false">本地 <span lang="en">Local</span></button>
+        <button type="button" data-source="Online" aria-pressed="false">在线 <span lang="en">Online</span></button>
+      </nav>
+      <form id="filters" aria-label="搜索和筛选作品">
+        <div class="search-row">
+          <label class="search-field" for="search">搜索作品
+            <input id="search" name="Search" type="search" placeholder="番号、标题、演员、分类或片商" maxlength="200" autocomplete="off">
+          </label>
+          <button type="submit" class="primary">搜索</button>
+        </div>
+        <details class="filter-panel">
+          <summary>筛选与排序</summary>
+          <div class="filter-grid">
+            <label for="actress">演员<input id="actress" name="Actress" type="text" maxlength="100" placeholder="演员名称（完整匹配）"></label>
+            <label for="genre">分类<input id="genre" name="Genre" type="text" maxlength="100" placeholder="分类名称（完整匹配）"></label>
+            <label for="studio">片商<input id="studio" name="Studio" type="text" maxlength="100" placeholder="片商名称（完整匹配）"></label>
+            <label for="released-from">发布起始日期<input id="released-from" name="ReleasedFrom" type="date"></label>
+            <label for="released-to">发布截止日期<input id="released-to" name="ReleasedTo" type="date"></label>
+            <label for="sort">排序依据<select id="sort" name="Sort"><option value="ReleaseDate">发布日期</option><option value="ViewCount">Jable 浏览数</option><option value="FavoriteCount">Jable 收藏数</option></select></label>
+            <label for="order">排列顺序<select id="order" name="Descending"><option value="true">从高到低 / 从新到旧</option><option value="false">从低到高 / 从旧到新</option></select></label>
+            <label for="limit">每页数量<select id="limit" name="Limit"><option value="24">24 部</option><option value="48">48 部</option><option value="96">96 部</option></select></label>
+          </div>
+          <div class="filter-actions"><button type="submit" class="primary">应用筛选</button><button type="reset">重置</button></div>
+        </details>
+      </form>
+    </div>
+    <div class="catalog-heading">
+      <h2 id="catalog-title">全部作品</h2>
+      <p id="result-count" role="status" aria-live="polite"></p>
+    </div>
+    <p id="sync-status" class="sync-status" role="status" aria-live="polite">正在读取缓存状态…</p>
+    <p id="message" class="notice" role="status" aria-live="polite"></p>
+    <section id="catalog" class="poster-grid" aria-labelledby="catalog-title" aria-busy="false" tabindex="-1"></section>
+    <nav id="paging" class="paging" aria-label="目录分页">
+      <button id="previous" type="button" disabled>← 上一页</button>
+      <span id="page-info" aria-live="polite">第 1 页</span>
+      <button id="next" type="button" disabled>下一页 →</button>
+    </nav>
+    <noscript><p class="notice">请启用 JavaScript，以使用当前 Jellyfin 登录凭据浏览此目录。</p></noscript>
+  </main>
+</body>
+</html>

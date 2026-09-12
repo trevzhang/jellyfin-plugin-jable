@@ -1,0 +1,15 @@
+.DS_Store
+.superpowers/
+dist/
+**/bin/
+**/obj/
+**/TestResults/
+
+# Local development artifacts and the legacy standalone scraper are not part of this plugin repository.
+/deploy_nas.sh
+/docs/
+/jable_scraper.py
+/shorten_names.py
+/tdd_red_check.py
+/test_jable_scraper.py
+/web.bak

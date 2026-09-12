@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <title>Jable</title>
+</head>
+<body>
+    <div id="JableConfigPage" data-role="page" class="page type-interior pluginConfigurationPage">
+        <div data-role="content">
+            <div class="content-primary">
+                <form id="jableConfigForm">
+                    <div class="selectContainer">
+                        <label for="library">Library</label>
+                        <select id="library"><option value="">No library selected</option></select>
+                    </div>
+                    <div class="inputContainer"><label for="proxyUrl">Proxy URL</label><input id="proxyUrl" type="url"></div>
+                    <div class="inputContainer"><label for="proxyUsername">Proxy username</label><input id="proxyUsername" type="text"></div>
+                    <div class="inputContainer"><label for="proxyPassword">Proxy password</label><input id="proxyPassword" type="password" autocomplete="new-password"></div>
+                    <div class="checkboxContainer"><label><input id="clearProxyPassword" type="checkbox"> Clear saved proxy password</label></div>
+                    <div class="inputContainer"><label for="recentPages">Recent page count</label><input id="recentPages" type="number" min="1" max="100"></div>
+                    <div class="inputContainer"><label for="timeout">Request timeout (seconds)</label><input id="timeout" type="number" min="5" max="60"></div>
+                    <div class="inputContainer"><label for="requestInterval">Minimum request interval (ms)</label><input id="requestInterval" type="number" min="250"></div>
+                    <button is="emby-button" type="submit" class="raised button-submit block">Save</button>
+                </form>
+            </div>
+        </div>
+    </div>
+    <script>
+        (() => {
+            const pluginId = '7378435d-77d2-4ef4-8e7f-c1269f624b24';
+            const form = document.querySelector('#jableConfigForm');
+            let config;
+
+            document.querySelector('#JableConfigPage').addEventListener('viewshow', async () => {
+                config = await ApiClient.getPluginConfiguration(pluginId);
+                const folders = await ApiClient.getVirtualFolders();
+                const library = form.querySelector('#library');
+                const emptyOption = document.createElement('option');
+                emptyOption.value = '';
+                emptyOption.textContent = 'No library selected';
+                library.replaceChildren(emptyOption);
+                for (const folder of folders) {
+                    const option = document.createElement('option');
+                    option.value = folder.ItemId;
+                    option.textContent = folder.Name;
+                    option.selected = option.value === config.SelectedLibraryId;
+                    library.append(option);
+                }
+                form.querySelector('#proxyUrl').value = config.ProxyUrl;
+                form.querySelector('#proxyUsername').value = config.ProxyUsername;
+                form.querySelector('#proxyPassword').value = '';
+                form.querySelector('#clearProxyPassword').checked = false;
+                form.querySelector('#recentPages').value = config.RecentPageCount;
+                form.querySelector('#timeout').value = config.RequestTimeoutSeconds;
+                form.querySelector('#requestInterval').value = config.MinimumRequestIntervalMs;
+            });
+
+            form.addEventListener('submit', async event => {
+                event.preventDefault();
+                config.SelectedLibraryId = form.querySelector('#library').value || '00000000-0000-0000-0000-000000000000';
+                config.ProxyUrl = form.querySelector('#proxyUrl').value.trim();
+                config.ProxyUsername = form.querySelector('#proxyUsername').value.trim();
+                const password = form.querySelector('#proxyPassword').value;
+                config.NewProxyPassword = password;
+                config.ClearProxyPassword = form.querySelector('#clearProxyPassword').checked;
+                config.RecentPageCount = Math.min(100, Math.max(1, Number(form.querySelector('#recentPages').value)));
+                config.RequestTimeoutSeconds = Math.min(60, Math.max(5, Number(form.querySelector('#timeout').value)));
+                config.MinimumRequestIntervalMs = Math.max(250, Number(form.querySelector('#requestInterval').value));
+                await ApiClient.updatePluginConfiguration(pluginId, config);
+                form.querySelector('#proxyPassword').value = '';
+                form.querySelector('#clearProxyPassword').checked = false;
+                Dashboard.alert('Restart Jellyfin to apply proxy changes');
+            });
+        })();
+    </script>
+</body>
+</html>
