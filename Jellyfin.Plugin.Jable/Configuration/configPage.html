@@ -31,7 +31,7 @@
             const form = document.querySelector('#jableConfigForm');
             let config;
 
-            document.querySelector('#JableConfigPage').addEventListener('viewshow', async () => {
+            document.querySelector('#JableConfigPage').addEventListener('pageshow', async () => {
                 config = await ApiClient.getPluginConfiguration(pluginId);
                 const folders = await ApiClient.getVirtualFolders();
                 const library = form.querySelector('#library');

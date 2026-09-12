@@ -1,7 +1,7 @@
 ---
 name: "Jable"
 guid: "7378435d-77d2-4ef4-8e7f-c1269f624b24"
-version: "0.1.0.0"
+version: "0.1.1.0"
 targetAbi: "10.10.7.0"
 framework: "net8.0"
 overview: "Jable metadata and catalog for Jellyfin"
@@ -10,4 +10,4 @@ category: "Metadata"
 owner: "zcg"
 artifacts:
   - "Jellyfin.Plugin.Jable.dll"
-changelog: "Initial release"
+changelog: "Fix Jellyfin configuration page initialization"

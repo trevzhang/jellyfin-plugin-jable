@@ -30,4 +30,16 @@ public sealed class ConfigurationTests
         Assert.Contains("library.replaceChildren(emptyOption);", page);
         Assert.Contains("form.querySelector('#library').value || '00000000-0000-0000-0000-000000000000'", page);
     }
+
+    [Fact]
+    public void ConfigurationLoadsOnJellyfinPluginPageEvent()
+    {
+        using var stream = typeof(Plugin).Assembly.GetManifestResourceStream("Jellyfin.Plugin.Jable.Configuration.configPage.html");
+        Assert.NotNull(stream);
+        using var reader = new StreamReader(stream);
+        var page = reader.ReadToEnd();
+
+        Assert.Contains("addEventListener('pageshow'", page);
+        Assert.DoesNotContain("addEventListener('viewshow'", page);
+    }
 }
