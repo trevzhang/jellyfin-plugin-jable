@@ -8,6 +8,14 @@
     "category": "Metadata",
     "versions": [
       {
+        "version": "0.1.2.0",
+        "changelog": "Initialize the Jellyfin configuration page immediately.",
+        "targetAbi": "10.10.7.0",
+        "sourceUrl": "https://github.com/trevzhang/jellyfin-plugin-jable/releases/download/v0.1.2/jellyfin-plugin-jable-0.1.2.zip",
+        "checksum": "e9275c65cbe1511583424be39acf5244",
+        "timestamp": "2026-09-12T18:49:03Z"
+      },
+      {
         "version": "0.1.1.0",
         "changelog": "Fix Jellyfin 10.10 configuration page initialization.",
         "targetAbi": "10.10.7.0",

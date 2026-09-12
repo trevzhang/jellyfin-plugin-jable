@@ -31,7 +31,7 @@
             const form = document.querySelector('#jableConfigForm');
             let config;
 
-            document.querySelector('#JableConfigPage').addEventListener('pageshow', async () => {
+            async function loadConfiguration() {
                 config = await ApiClient.getPluginConfiguration(pluginId);
                 const folders = await ApiClient.getVirtualFolders();
                 const library = form.querySelector('#library');
@@ -53,7 +53,10 @@
                 form.querySelector('#recentPages').value = config.RecentPageCount;
                 form.querySelector('#timeout').value = config.RequestTimeoutSeconds;
                 form.querySelector('#requestInterval').value = config.MinimumRequestIntervalMs;
-            });
+            }
+
+            document.querySelector('#JableConfigPage').addEventListener('pageshow', loadConfiguration);
+            loadConfiguration();
 
             form.addEventListener('submit', async event => {
                 event.preventDefault();

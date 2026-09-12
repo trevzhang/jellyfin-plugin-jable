@@ -41,5 +41,7 @@ public sealed class ConfigurationTests
 
         Assert.Contains("addEventListener('pageshow'", page);
         Assert.DoesNotContain("addEventListener('viewshow'", page);
+        Assert.Contains("addEventListener('pageshow', loadConfiguration);", page);
+        Assert.Contains("\n            loadConfiguration();", page);
     }
 }

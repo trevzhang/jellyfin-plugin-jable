@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 repo=$(cd "$(dirname "$0")/.." && pwd)
-archive=${1:-"$repo/dist/jellyfin-plugin-jable-0.1.1.zip"}
+archive=${1:-"$repo/dist/jellyfin-plugin-jable-0.1.2.zip"}
 [[ -f "$archive" ]] || { echo "Missing plugin archive: $archive" >&2; exit 1; }
 image=jellyfin/jellyfin:10.10.7
 temporary=$(mktemp -d "${TMPDIR:-/tmp}/jable-smoke.XXXXXXXX")
@@ -16,8 +16,8 @@ trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 
-mkdir -p "$temporary/config/plugins/Jable_0.1.1.0" "$temporary/cache"
-python3 - "$archive" "$temporary/config/plugins/Jable_0.1.1.0" <<'PY'
+mkdir -p "$temporary/config/plugins/Jable_0.1.2.0" "$temporary/cache"
+python3 - "$archive" "$temporary/config/plugins/Jable_0.1.2.0" <<'PY'
 import sys, zipfile
 with zipfile.ZipFile(sys.argv[1]) as archive:
     assert sorted(archive.namelist()) == ['Jellyfin.Plugin.Jable.dll', 'build.yaml'], 'unexpected package contents'
