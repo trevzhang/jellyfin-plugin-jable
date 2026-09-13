@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 repo=$(cd "$(dirname "$0")/.." && pwd)
-archive=${1:-"$repo/dist/jellyfin-plugin-jable-0.1.4.zip"}
+archive=${1:-"$repo/dist/jellyfin-plugin-jable-0.1.5.zip"}
 [[ -f "$archive" ]] || { echo "Missing plugin archive: $archive" >&2; exit 1; }
 image=jellyfin/jellyfin:10.10.7
 temporary=$(mktemp -d "${TMPDIR:-/tmp}/jable-smoke.XXXXXXXX")
@@ -16,8 +16,8 @@ trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 
-mkdir -p "$temporary/config/plugins/Jable_0.1.4.0" "$temporary/cache"
-python3 - "$archive" "$temporary/config/plugins/Jable_0.1.4.0" <<'PY'
+mkdir -p "$temporary/config/plugins/Jable_0.1.5.0" "$temporary/cache"
+python3 - "$archive" "$temporary/config/plugins/Jable_0.1.5.0" <<'PY'
 import sys, zipfile
 with zipfile.ZipFile(sys.argv[1]) as archive:
     assert sorted(archive.namelist()) == ['Jellyfin.Plugin.Jable.dll', 'build.yaml'], 'unexpected package contents'
@@ -52,7 +52,7 @@ token = None
 
 def request(path, data=None, expected=200, timeout=5):
     headers = {'Content-Type': 'application/json',
-               'Authorization': 'MediaBrowser Client="Jable Smoke", Device="Local", DeviceId="jable-smoke", Version="0.1.4"'}
+               'Authorization': 'MediaBrowser Client="Jable Smoke", Device="Local", DeviceId="jable-smoke", Version="0.1.5"'}
     if token:
         headers['X-Emby-Token'] = token
     body = None if data is None else json.dumps(data).encode()
@@ -100,11 +100,20 @@ movie = next(option for option in options['TypeOptions'] if option['Type'] == 'M
 assert any(provider['Name'] == 'Jable' for provider in movie['MetadataFetchers']), movie
 assert any(provider['Name'] == 'Jable' for provider in movie['ImageFetchers']), movie
 request('/Jable/Catalog', expected=403)  # No selected library: controller and access service fail closed.
+request('/Jable/Status', expected=403)
+request('/Jable/Sync', {}, 403)
 print('PASS: Jellyfin 10.10.7; Page 200; unknown asset 404; menu; controller/LibraryAccessService; both providers; scheduled task; unconfigured catalog 403')
 
 config_path = '/Plugins/7378435d-77d2-4ef4-8e7f-c1269f624b24/Configuration'
 config = request(config_path)
 assert 'ProxyPassword' not in config
+request(config_path, dict(config, SelectedLibraryId='aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'), 204)
+sync_status = request('/Jable/Status')
+sync_task = next(task for task in tasks if task['Key'] == 'JableCatalogSync')
+assert sync_status['CanManage'] is True and sync_status['SyncTaskId'] == sync_task['Id']
+assert sync_status['IsSyncRunning'] is False
+request(config_path, config, 204)  # Restore the unconfigured test instance; no remote sync is queued.
+print('PASS: administrator status exposes the registered Jable worker ID; unconfigured Status and Sync fail closed')
 secret = secrets.token_urlsafe(20)
 config.update(ProxyUrl='http://smoke-user:' + secret + '@127.0.0.1:1080', ProxyUsername='')
 request(config_path, config, 204)

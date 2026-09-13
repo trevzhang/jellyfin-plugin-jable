@@ -42,6 +42,9 @@ main { max-width: 1760px; margin: 0 auto; padding: 1.5rem 4vw 3rem; }
 .catalog-heading h2 { margin: 0; font-size: 1.3rem; font-weight: 600; }
 #result-count { color: var(--muted); font-size: .9rem; }
 .sync-status { color: var(--muted); font-size: .8rem; line-height: 1.6; white-space: pre-line; overflow-wrap: anywhere; margin: .1rem 0 1.2rem; }
+.admin-sync { display: flex; flex-wrap: wrap; align-items: center; gap: .8rem; margin-bottom: 1.2rem; }
+.admin-sync a { color: #6cdaff; padding: .7rem 0; text-decoration: underline; }
+#sync-feedback { color: var(--muted); }
 .notice { color: var(--muted); line-height: 1.6; }
 .notice:empty { display: none; }
 .notice.error { color: #ffc5bc; background: #391f20; padding: 1rem; border: 1px solid #8b494b; border-radius: .4rem; }

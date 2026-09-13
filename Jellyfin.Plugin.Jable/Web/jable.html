@@ -52,6 +52,11 @@
       <p id="result-count" role="status" aria-live="polite"></p>
     </div>
     <p id="sync-status" class="sync-status" role="status" aria-live="polite">正在读取缓存状态…</p>
+    <div id="admin-sync" class="admin-sync" hidden>
+      <button id="sync-now" type="button" disabled>立即同步</button>
+      <a id="sync-schedule" hidden>配置同步周期</a>
+      <span id="sync-feedback" role="status" aria-live="polite"></span>
+    </div>
     <p id="message" class="notice" role="status" aria-live="polite"></p>
     <section id="catalog" class="poster-grid" aria-labelledby="catalog-title" aria-busy="false" tabindex="-1"></section>
     <nav id="paging" class="paging" aria-label="目录分页">

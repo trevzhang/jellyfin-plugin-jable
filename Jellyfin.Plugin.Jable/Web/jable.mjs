@@ -32,6 +32,7 @@ export function createApi({ origin, token, fetch: fetcher = globalThis.fetch, re
     const response = await fetcher(url.pathname + url.search, {
       method, signal, headers: { 'X-Emby-Token': token }, credentials: 'same-origin', redirect: 'error'
     });
+    signal?.throwIfAborted();
     if (response.status === 401) redirect('/web/index.html');
     if (response.status === 403) onForbidden();
     if (!response.ok) throw Object.assign(new Error(`请求失败（HTTP ${response.status}）`), { status: response.status });
@@ -104,14 +105,36 @@ function start() {
   let request;
   let images;
   let statusRequest;
+  let syncRequest;
+  let statusTimer;
+  let canManage = false;
+  let syncRequested = false;
+  let syncPosting = false;
+  let syncRunning = false;
+  let closed = false;
   let denied = false;
+
+  function stopRequests() {
+    clearTimeout(statusTimer);
+    request?.abort();
+    statusRequest?.abort();
+    syncRequest?.abort();
+    images?.dispose();
+  }
+
+  function pollStatus() {
+    clearTimeout(statusTimer);
+    if (!closed && !denied) statusTimer = setTimeout(() => { void refreshStatus(); }, 2000);
+  }
+
   const api = createApi({
     origin: location.origin, token: server.AccessToken,
-    redirect: path => location.replace(path),
+    redirect: path => { closed = true; stopRequests(); location.replace(path); },
     onForbidden: () => {
       denied = true;
-      request?.abort();
-      images?.dispose();
+      stopRequests();
+      byId('admin-sync').hidden = true;
+      byId('sync-feedback').textContent = '';
       catalog.replaceChildren();
       byId('controls').hidden = true;
       byId('paging').hidden = true;
@@ -172,20 +195,67 @@ function start() {
   }
 
   async function refreshStatus() {
-    if (denied) return;
+    if (denied || closed) return;
+    clearTimeout(statusTimer);
     statusRequest?.abort();
     statusRequest = new AbortController();
+    const current = statusRequest;
     try {
-      const status = await (await api('/Jable/Status', { signal: statusRequest.signal })).json();
-      if (denied) return;
+      const status = await (await api('/Jable/Status', { signal: current.signal })).json();
+      if (denied || closed || current !== statusRequest || current.signal.aborted) return;
       const lines = [status.LastSuccessfulSync ? `缓存更新于 ${new Date(status.LastSuccessfulSync).toLocaleString()}` : '尚无成功同步记录'];
       if (status.IsRecovered) lines.push('正在使用恢复的目录缓存');
       if (status.LastError) lines.push(`最近同步或搜索失败：${status.LastError}`);
       byId('sync-status').textContent = lines.join(' · ');
+      canManage = status.CanManage === true;
+      byId('admin-sync').hidden = !canManage;
+      byId('sync-schedule').hidden = !canManage || !status.SyncTaskId;
+      byId('sync-schedule').href = canManage && status.SyncTaskId
+        ? `/web/index.html#/dashboard/tasks/edit?id=${encodeURIComponent(status.SyncTaskId)}` : '';
+      const completed = canManage && (syncRequested || syncRunning) && !status.IsSyncRunning && !syncPosting;
+      syncRunning = canManage && status.IsSyncRunning === true;
+      if (completed || !canManage) syncRequested = false;
+      byId('sync-now').disabled = !canManage || syncRequested || syncPosting || syncRunning;
+      if (syncRunning) {
+        byId('sync-feedback').textContent = '正在同步…';
+        pollStatus();
+      } else if (completed) {
+        byId('sync-feedback').textContent = status.LastError ? '同步结束，请查看上方错误信息。' : '同步已完成。';
+        void loadCatalog(appliedFilters === undefined);
+      }
     } catch (error) {
-      if (!denied && error.name !== 'AbortError' && error.status !== 401) byId('sync-status').textContent = '暂时无法读取同步状态；已有目录仍可浏览。';
+      if (denied || closed || current !== statusRequest || current.signal.aborted || error.name === 'AbortError' || error.status === 401) return;
+      byId('sync-status').textContent = '暂时无法读取同步状态；已有目录仍可浏览。';
+      if (!syncPosting && (syncRequested || syncRunning)) {
+        syncRequested = syncRunning = false;
+        byId('sync-now').disabled = !canManage;
+        byId('sync-feedback').textContent = '读取同步状态失败，请稍后重试。';
+      }
     }
   }
+
+  byId('sync-now').addEventListener('click', async () => {
+    if (closed || denied || !canManage || syncPosting || byId('sync-now').disabled) return;
+    clearTimeout(statusTimer);
+    statusRequest?.abort();
+    syncRequested = syncPosting = true;
+    byId('sync-now').disabled = true;
+    byId('sync-feedback').textContent = '正在提交同步任务…';
+    syncRequest = new AbortController();
+    const current = syncRequest;
+    try {
+      await api('/Jable/Sync', { method: 'POST', signal: current.signal });
+      if (closed || denied || current !== syncRequest || current.signal.aborted) return;
+      syncPosting = false;
+      byId('sync-feedback').textContent = '同步任务已排队…';
+      pollStatus();
+    } catch (error) {
+      if (closed || denied || current !== syncRequest || current.signal.aborted || error.name === 'AbortError') return;
+      syncRequested = syncPosting = false;
+      byId('sync-now').disabled = !canManage;
+      byId('sync-feedback').textContent = '提交同步失败，请稍后重试。';
+    }
+  });
 
   function readFilters() {
     const filters = Object.fromEntries(new FormData(form));
@@ -205,7 +275,7 @@ function start() {
   }
 
   async function loadCatalog(applyFilters = true) {
-    if (denied) return;
+    if (denied || closed) return;
     request?.abort();
     images?.dispose();
     request = new AbortController();
@@ -218,7 +288,7 @@ function start() {
     try {
       const filters = applyFilters ? readFilters() : { ...appliedFilters, Source: source, StartIndex: startIndex };
       const page = await (await api(`/Jable/Catalog?${buildQuery(filters)}`, { signal: current.signal })).json();
-      if (current !== request || current.signal.aborted || denied) return;
+      if (current !== request || current.signal.aborted || denied || closed) return;
       pageSize = Number(filters.Limit);
       appliedFilters = filters;
       successfulStartIndex = startIndex;
@@ -261,7 +331,16 @@ function start() {
   }));
   byId('previous').addEventListener('click', () => { startIndex = Math.max(0, startIndex - pageSize); void loadCatalog(false); });
   byId('next').addEventListener('click', () => { startIndex += pageSize; void loadCatalog(false); });
-  window.addEventListener('pagehide', () => { request?.abort(); statusRequest?.abort(); images?.dispose(); });
+  window.addEventListener('pagehide', () => { closed = true; stopRequests(); });
+  window.addEventListener('pageshow', event => {
+    if (!event.persisted || !closed) return;
+    closed = false;
+    canManage = syncRequested = syncPosting = syncRunning = false;
+    byId('sync-now').disabled = true;
+    byId('sync-feedback').textContent = '';
+    void refreshStatus();
+    void loadCatalog(appliedFilters === undefined);
+  });
   void refreshStatus();
   void loadCatalog();
 }

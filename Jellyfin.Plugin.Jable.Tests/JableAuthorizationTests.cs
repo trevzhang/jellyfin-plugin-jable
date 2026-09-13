@@ -34,6 +34,8 @@ public sealed class JableAuthorizationTests : IDisposable
     private Func<HttpResponseMessage> _imageResponse = () => new(HttpStatusCode.OK) { Content = new ByteArrayContent([1, 2, 3]) };
     private bool _userExists = true;
     private int _htmlRequests;
+    private IScheduledTaskWorker[] _workers = [];
+    private JableCatalogSyncTask _syncTask = null!;
 
     public JableAuthorizationTests()
     {
@@ -43,6 +45,7 @@ public sealed class JableAuthorizationTests : IDisposable
             _htmlRequests++;
             return Task.FromResult(File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "Fixtures", "detail.html")));
         }, new JableParser(), _store, () => _config, TimeProvider.System);
+        _syncTask = new JableCatalogSyncTask(catalog);
         var users = DispatchProxy.Create<IUserManager, InterfaceProxy>();
         ((InterfaceProxy)(object)users).Call = (method, args) => method.Name switch
         {
@@ -53,6 +56,7 @@ public sealed class JableAuthorizationTests : IDisposable
         var tasks = DispatchProxy.Create<ITaskManager, InterfaceProxy>();
         ((InterfaceProxy)(object)tasks).Call = (method, _) =>
         {
+            if (method.Name == "get_ScheduledTasks") return _workers;
             Assert.Equal("QueueIfNotRunning", method.Name);
             _queuedTasks.Add(Assert.Single(method.GetGenericArguments()));
             return null;
@@ -162,6 +166,37 @@ public sealed class JableAuthorizationTests : IDisposable
         Assert.IsType<NoContentResult>(await _controller.ClearSearch(CancellationToken.None));
         Assert.Empty(_store.Snapshot.Works);
         Assert.Equal(0, _htmlRequests);
+    }
+
+    [Theory]
+    [InlineData(true, TaskState.Idle, true, false)]
+    [InlineData(true, TaskState.Running, true, true)]
+    [InlineData(true, TaskState.Cancelling, true, true)]
+    [InlineData(true, TaskState.Running, false, false)]
+    [InlineData(false, TaskState.Running, true, false)]
+    public async Task StatusExposesSyncWorkerOnlyToAdministrators(bool administrator, TaskState state, bool available, bool running)
+    {
+        _policy.IsAdministrator = administrator;
+        var worker = DispatchProxy.Create<IScheduledTaskWorker, InterfaceProxy>();
+        ((InterfaceProxy)(object)worker).Call = (method, _) => method.Name switch
+        {
+            "get_ScheduledTask" => _syncTask,
+            "get_Id" => "jable-task-id",
+            "get_State" => state,
+            _ => throw new InvalidOperationException(method.Name),
+        };
+        var unrelated = DispatchProxy.Create<IScheduledTaskWorker, InterfaceProxy>();
+        ((InterfaceProxy)(object)unrelated).Call = (method, _) => method.Name == "get_ScheduledTask"
+            ? DispatchProxy.Create<IScheduledTask, InterfaceProxy>() : throw new InvalidOperationException("Unrelated worker must not supply status.");
+        _workers = available ? [unrelated, worker] : [unrelated];
+        var status = Assert.IsType<CatalogStatusDto>(Assert.IsType<OkObjectResult>(await _controller.GetStatus(default)).Value);
+        using var json = System.Text.Json.JsonDocument.Parse(System.Text.Json.JsonSerializer.Serialize(status));
+        Assert.True(json.RootElement.TryGetProperty("CanManage", out var canManage), "Status must expose CanManage.");
+        Assert.Equal(administrator, canManage.GetBoolean());
+        Assert.Equal(running, json.RootElement.GetProperty("IsSyncRunning").GetBoolean());
+        Assert.Equal(administrator && available ? "jable-task-id" : "", json.RootElement.GetProperty("SyncTaskId").GetString());
+        Assert.Equal("no-store", _controller.Response.Headers.CacheControl);
+        Assert.Empty(_queuedTasks);
     }
 
     [Fact]

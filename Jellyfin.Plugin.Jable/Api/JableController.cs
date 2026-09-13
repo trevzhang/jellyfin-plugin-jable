@@ -118,8 +118,16 @@ public sealed class JableController(JableCatalogService catalog, LibraryAccessSe
     [HttpGet("Status")]
     public async Task<IActionResult> GetStatus(CancellationToken cancellationToken)
     {
-        if (AuthorizeUser(out _) is { } rejection) return rejection;
-        return Ok(await catalog.GetStatusAsync(cancellationToken).ConfigureAwait(false));
+        if (AuthorizeUser(out var user) is { } rejection) return rejection;
+        var status = await catalog.GetStatusAsync(cancellationToken).ConfigureAwait(false);
+        status.CanManage = JableAuthorization.IsAdministrator(users.GetUserDto(user!).Policy);
+        if (status.CanManage)
+        {
+            var worker = tasks.ScheduledTasks.FirstOrDefault(task => task.ScheduledTask is JableCatalogSyncTask);
+            status.SyncTaskId = worker?.Id ?? string.Empty;
+            status.IsSyncRunning = worker?.State is TaskState.Running or TaskState.Cancelling;
+        }
+        return Ok(status);
     }
 
     [HttpPost("Sync")]

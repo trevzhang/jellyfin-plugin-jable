@@ -103,6 +103,9 @@ public sealed class CatalogItemDto
 public sealed class CatalogStatusDto
 {
     public int ApiVersion { get; set; } = 1;
+    public bool CanManage { get; set; }
+    public bool IsSyncRunning { get; set; }
+    public string SyncTaskId { get; set; } = string.Empty;
     public int SchemaVersion { get; set; }
     public DateTimeOffset? LastSuccessfulSync { get; set; }
     public string LastError { get; set; } = string.Empty;

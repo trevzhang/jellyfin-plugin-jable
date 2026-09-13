@@ -8,6 +8,14 @@
     "category": "Metadata",
     "versions": [
       {
+        "version": "0.1.5.0",
+        "changelog": "Add administrator manual sync controls and native schedule link.",
+        "targetAbi": "10.10.7.0",
+        "sourceUrl": "https://github.com/trevzhang/jellyfin-plugin-jable/releases/download/v0.1.5/jellyfin-plugin-jable-0.1.5.zip",
+        "checksum": "1ba35060c26eda8d654f5bb9a6b28be0",
+        "timestamp": "2026-09-13T17:35:31Z"
+      },
+      {
         "version": "0.1.4.0",
         "changelog": "Place the configuration script inside the Jellyfin page root.",
         "targetAbi": "10.10.7.0",
