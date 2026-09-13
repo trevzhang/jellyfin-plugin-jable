@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 repo=$(cd "$(dirname "$0")/.." && pwd)
-archive=${1:-"$repo/dist/jellyfin-plugin-jable-0.1.2.zip"}
+archive=${1:-"$repo/dist/jellyfin-plugin-jable-0.1.3.zip"}
 [[ -f "$archive" ]] || { echo "Missing plugin archive: $archive" >&2; exit 1; }
 image=jellyfin/jellyfin:10.10.7
 temporary=$(mktemp -d "${TMPDIR:-/tmp}/jable-smoke.XXXXXXXX")
@@ -16,8 +16,8 @@ trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 
-mkdir -p "$temporary/config/plugins/Jable_0.1.2.0" "$temporary/cache"
-python3 - "$archive" "$temporary/config/plugins/Jable_0.1.2.0" <<'PY'
+mkdir -p "$temporary/config/plugins/Jable_0.1.3.0" "$temporary/cache"
+python3 - "$archive" "$temporary/config/plugins/Jable_0.1.3.0" <<'PY'
 import sys, zipfile
 with zipfile.ZipFile(sys.argv[1]) as archive:
     assert sorted(archive.namelist()) == ['Jellyfin.Plugin.Jable.dll', 'build.yaml'], 'unexpected package contents'
@@ -52,7 +52,7 @@ token = None
 
 def request(path, data=None, expected=200, timeout=5):
     headers = {'Content-Type': 'application/json',
-               'Authorization': 'MediaBrowser Client="Jable Smoke", Device="Local", DeviceId="jable-smoke", Version="0.1.1"'}
+               'Authorization': 'MediaBrowser Client="Jable Smoke", Device="Local", DeviceId="jable-smoke", Version="0.1.3"'}
     if token:
         headers['X-Emby-Token'] = token
     body = None if data is None else json.dumps(data).encode()

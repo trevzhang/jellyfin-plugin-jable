@@ -2,7 +2,7 @@
 set -euo pipefail
 repo=$(cd "$(dirname "$0")/.." && pwd)
 cd "$repo"
-version=0.1.2
+version=0.1.3
 package="$repo/dist/jellyfin-plugin-jable-$version.zip"
 [[ ! -L dist && ! -L dist/plugin ]] || { echo 'Refusing symlinked dist paths' >&2; exit 1; }
 

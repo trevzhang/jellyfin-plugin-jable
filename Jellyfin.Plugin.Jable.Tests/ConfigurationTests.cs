@@ -39,6 +39,7 @@ public sealed class ConfigurationTests
         using var reader = new StreamReader(stream);
         var page = reader.ReadToEnd();
 
+        Assert.Contains("<script type=\"text/javascript\">", page);
         Assert.Contains("addEventListener('pageshow'", page);
         Assert.DoesNotContain("addEventListener('viewshow'", page);
         Assert.Contains("addEventListener('pageshow', loadConfiguration);", page);
