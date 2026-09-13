@@ -53,7 +53,7 @@ Docker is sufficient; a host .NET SDK is not required.
 
 ```bash
 ./scripts/package_plugin.sh
-./scripts/smoke_jellyfin.sh dist/jellyfin-plugin-jable-0.1.3.zip
+./scripts/smoke_jellyfin.sh dist/jellyfin-plugin-jable-0.1.4.zip
 ```
 
 ## Privacy and security
