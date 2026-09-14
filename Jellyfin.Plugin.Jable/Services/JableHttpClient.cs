@@ -295,12 +295,22 @@ public sealed class JableHttpClient : IDisposable
         if (!Uri.TryCreate(value, UriKind.Absolute, out var uri)
             || uri.Scheme is not ("http" or "https")
             || string.IsNullOrEmpty(uri.Host)
+            || HasAuthorityUserInfo(value)
             || !string.IsNullOrEmpty(uri.UserInfo)
             || uri.AbsolutePath != "/"
             || !string.IsNullOrEmpty(uri.Query)
             || !string.IsNullOrEmpty(uri.Fragment))
             throw new ArgumentException("Browser bridge URL must be an HTTP or HTTPS authority.", nameof(value));
         return uri;
+    }
+
+    private static bool HasAuthorityUserInfo(string value)
+    {
+        var authorityStart = value.IndexOf("://", StringComparison.Ordinal);
+        if (authorityStart < 0) return false;
+        authorityStart += 3;
+        var authorityEnd = value.IndexOfAny(['/', '?', '#'], authorityStart);
+        return value.AsSpan(authorityStart, (authorityEnd < 0 ? value.Length : authorityEnd) - authorityStart).Contains('@');
     }
 
     private static NetworkCredential? Credentials(Uri proxyUri, PluginConfiguration config)

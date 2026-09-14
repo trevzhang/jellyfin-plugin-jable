@@ -25,6 +25,10 @@ public sealed class JableHttpClientTests
         Assert.Equal(expected, JableHttpClient.IsAllowedJableUri(new Uri(value)));
 
     [Fact]
+    public void ValidateBridgeUriRejectsEmptyUserInfoDelimiter() =>
+        Assert.Throws<ArgumentException>(() => JableHttpClient.ValidateBridgeUri("http://@bridge:3000/"));
+
+    [Fact]
     public async Task GetHtmlFollowsThreeValidatedRedirects()
     {
         var handler = new QueueHandler(
