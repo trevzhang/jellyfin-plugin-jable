@@ -1,7 +1,10 @@
 using System.Buffers;
 using System.Net;
 using System.Net.Http;
+using System.Net.Http.Headers;
+using System.Net.Http.Json;
 using System.Text;
+using System.Text.Json;
 using Jellyfin.Plugin.Jable.Configuration;
 using Jellyfin.Plugin.Jable.Models;
 
@@ -14,7 +17,9 @@ public sealed class JableHttpClient : IDisposable
     private const int MaxAttempts = 3;
     private const int MaxRedirects = 3;
     private const int MaxHtmlBytes = 4 * 1024 * 1024;
+    private static readonly JsonSerializerOptions BridgeJsonOptions = new(JsonSerializerDefaults.Web);
     private readonly HttpClient _client;
+    private readonly HttpClient _bridgeClient;
     private readonly Func<PluginConfiguration> _configuration;
     private readonly SemaphoreSlim _throttle = new(1, 1);
     private DateTimeOffset _nextRequestAt;
@@ -26,11 +31,15 @@ public sealed class JableHttpClient : IDisposable
     {
     }
 
-    public JableHttpClient(HttpMessageHandler handler, Func<PluginConfiguration> configuration)
+    public JableHttpClient(HttpMessageHandler handler, Func<PluginConfiguration> configuration, HttpMessageHandler? bridgeHandler = null)
     {
         ArgumentNullException.ThrowIfNull(handler);
         ArgumentNullException.ThrowIfNull(configuration);
         _client = new HttpClient(handler, disposeHandler: true) { Timeout = Timeout.InfiniteTimeSpan };
+        _bridgeClient = new HttpClient(bridgeHandler ?? new SocketsHttpHandler { UseProxy = false }, disposeHandler: true)
+        {
+            Timeout = Timeout.InfiniteTimeSpan
+        };
         _configuration = configuration;
     }
 
@@ -68,6 +77,22 @@ public sealed class JableHttpClient : IDisposable
         using var scope = CreateRequestScope(cancellationToken);
         try
         {
+            if (!IsAllowedJableUri(uri))
+            {
+                throw new JableRequestException(JableFailureKind.Network, "Jable URI is not allowed.");
+            }
+
+            if (!string.IsNullOrWhiteSpace(_configuration().BrowserBridgeUrl))
+            {
+                var html = await GetBridgeHtmlAsync(uri, scope.Token).ConfigureAwait(false);
+                if (JableParser.IsChallengePage(html))
+                {
+                    throw new JableRequestException(JableFailureKind.Challenge, "Jable returned a challenge page.");
+                }
+
+                return html;
+            }
+
             var result = await SendAsync(uri, inspectHtml: true, scope.Token).ConfigureAwait(false);
             using var response = result.Response;
             return result.Html!;
@@ -84,7 +109,7 @@ public sealed class JableHttpClient : IDisposable
         {
             throw;
         }
-        catch (Exception exception) when (exception is HttpRequestException or IOException or InvalidOperationException)
+        catch (Exception exception) when (exception is HttpRequestException or IOException or InvalidOperationException or JsonException)
         {
             throw new JableRequestException(JableFailureKind.Network, "Jable response could not be read.", exception);
         }
@@ -110,7 +135,54 @@ public sealed class JableHttpClient : IDisposable
     public void Dispose()
     {
         _client.Dispose();
+        _bridgeClient.Dispose();
         _throttle.Dispose();
+    }
+
+    public async Task TestBridgeAsync(CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(_configuration().BrowserBridgeUrl))
+        {
+            throw new JableRequestException(JableFailureKind.Network, "Jable browser bridge is not configured.");
+        }
+
+        _ = await GetHtmlAsync(new Uri("https://jable.tv/latest-updates/"), cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task<string> GetBridgeHtmlAsync(Uri uri, CancellationToken cancellationToken)
+    {
+        var config = _configuration();
+        var endpoint = new Uri(ValidateBridgeUri(config.BrowserBridgeUrl), "v1/render");
+        using var request = new HttpRequestMessage(HttpMethod.Post, endpoint)
+        {
+            Content = JsonContent.Create(new BridgeRenderRequest(uri.AbsoluteUri))
+        };
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", config.BrowserBridgeToken);
+        using var response = await _bridgeClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken).ConfigureAwait(false);
+        if (!response.IsSuccessStatusCode)
+        {
+            throw new JableRequestException(JableFailureKind.Network, $"Jable browser bridge returned {(int)response.StatusCode}.");
+        }
+
+        var json = await ReadHtmlAsync(response.Content, cancellationToken).ConfigureAwait(false);
+        var rendered = JsonSerializer.Deserialize<BridgeRenderResponse>(json, BridgeJsonOptions)
+            ?? throw new JableRequestException(JableFailureKind.Network, "Jable browser bridge returned invalid JSON.");
+        if (!Uri.TryCreate(rendered.Url, UriKind.Absolute, out var finalUri) || !IsAllowedJableUri(finalUri))
+        {
+            throw new JableRequestException(JableFailureKind.Network, "Jable browser bridge returned an unsafe URL.");
+        }
+
+        if (string.IsNullOrEmpty(rendered.Html))
+        {
+            throw new JableRequestException(JableFailureKind.Network, "Jable browser bridge returned empty HTML.");
+        }
+
+        if (Encoding.UTF8.GetByteCount(rendered.Html) > MaxHtmlBytes)
+        {
+            throw new JableRequestException(JableFailureKind.Network, "Jable HTML response is too large.");
+        }
+
+        return rendered.Html;
     }
 
     private async Task<JableResponse> SendAsync(Uri uri, bool inspectHtml, CancellationToken cancellationToken)
@@ -332,6 +404,8 @@ public sealed class JableHttpClient : IDisposable
     }
 
     private sealed record JableResponse(HttpResponseMessage Response, string? Html);
+    private sealed record BridgeRenderRequest(string Url);
+    private sealed record BridgeRenderResponse(string Url, string Html);
 }
 
 public sealed class JableRequestException : Exception

@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Http.Headers;
+using System.Net.Http.Json;
 using System.Reflection;
 using Jellyfin.Plugin.Jable.Configuration;
 using Jellyfin.Plugin.Jable.Models;
@@ -27,6 +28,121 @@ public sealed class JableHttpClientTests
     [Fact]
     public void ValidateBridgeUriRejectsEmptyUserInfoDelimiter() =>
         Assert.Throws<ArgumentException>(() => JableHttpClient.ValidateBridgeUri("http://@bridge:3000/"));
+
+    [Fact]
+    public async Task GetHtmlUsesConfiguredBrowserBridgeWithoutCallingDirectTransport()
+    {
+        var direct = new QueueHandler(() => throw new Xunit.Sdk.XunitException("direct transport used"));
+        var bridge = new QueueHandler(() => new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = JsonContent.Create(new
+            {
+                url = "https://jable.tv/latest-updates/",
+                html = "<html><body>rendered</body></html>"
+            })
+        });
+        var config = new PluginConfiguration
+        {
+            BrowserBridgeUrl = "http://bridge:3000/",
+            BrowserBridgeToken = "secret"
+        };
+        using var client = new JableHttpClient(direct, () => config, bridge);
+
+        Assert.Contains("rendered", await client.GetHtmlAsync(
+            new Uri("https://jable.tv/latest-updates/"), CancellationToken.None));
+        Assert.Empty(direct.RequestUris);
+        Assert.Single(bridge.RequestUris);
+        Assert.Equal("http://bridge:3000/v1/render", bridge.RequestUris[0].AbsoluteUri);
+        Assert.Equal("Bearer", bridge.Requests[0].Headers.Authorization?.Scheme);
+        Assert.Equal("secret", bridge.Requests[0].Headers.Authorization?.Parameter);
+    }
+
+    [Theory]
+    [InlineData(HttpStatusCode.Unauthorized)]
+    [InlineData(HttpStatusCode.BadGateway)]
+    [InlineData(HttpStatusCode.GatewayTimeout)]
+    public async Task BridgeStatusFailuresRemainNetworkFailures(HttpStatusCode status)
+    {
+        var config = new PluginConfiguration { BrowserBridgeUrl = "http://bridge:3000/", BrowserBridgeToken = "secret" };
+        using var client = new JableHttpClient(new QueueHandler(), () => config,
+            new QueueHandler(() => new HttpResponseMessage(status)));
+
+        var error = await Assert.ThrowsAsync<JableRequestException>(() =>
+            client.GetHtmlAsync(new Uri("https://jable.tv/latest-updates/"), CancellationToken.None));
+
+        Assert.Equal(JableFailureKind.Network, error.Kind);
+    }
+
+    [Fact]
+    public async Task BridgeRejectsMalformedJsonAndUnsafeFinalUrl()
+    {
+        var config = new PluginConfiguration { BrowserBridgeUrl = "http://bridge:3000/", BrowserBridgeToken = "secret" };
+        foreach (var response in new[]
+        {
+            new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent("{") },
+            new HttpResponseMessage(HttpStatusCode.OK) { Content = JsonContent.Create(new { url = "https://evil.test/", html = "<html></html>" }) }
+        })
+        {
+            using var client = new JableHttpClient(new QueueHandler(), () => config, new QueueHandler(() => response));
+            var error = await Assert.ThrowsAsync<JableRequestException>(() =>
+                client.GetHtmlAsync(new Uri("https://jable.tv/latest-updates/"), CancellationToken.None));
+            Assert.Equal(JableFailureKind.Network, error.Kind);
+        }
+    }
+
+    [Fact]
+    public async Task BridgeChallengeHtmlKeepsChallengeClassification()
+    {
+        var config = new PluginConfiguration { BrowserBridgeUrl = "http://bridge:3000/", BrowserBridgeToken = "secret" };
+        using var client = new JableHttpClient(new QueueHandler(), () => config,
+            new QueueHandler(() => new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = JsonContent.Create(new { url = "https://jable.tv/", html = Fixture("challenge.html") })
+            }));
+
+        var error = await Assert.ThrowsAsync<JableRequestException>(() =>
+            client.GetHtmlAsync(new Uri("https://jable.tv/"), CancellationToken.None));
+
+        Assert.Equal(JableFailureKind.Challenge, error.Kind);
+    }
+
+    [Fact]
+    public async Task BridgeRejectsOversizedHtml()
+    {
+        var config = new PluginConfiguration { BrowserBridgeUrl = "http://bridge:3000/", BrowserBridgeToken = "secret" };
+        using var client = new JableHttpClient(new QueueHandler(), () => config,
+            new QueueHandler(() => new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = JsonContent.Create(new { url = "https://jable.tv/", html = new string('x', MaxHtmlBytes + 1) })
+            }));
+
+        await Assert.ThrowsAsync<JableRequestException>(() =>
+            client.GetHtmlAsync(new Uri("https://jable.tv/"), CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task BridgePropagatesCallerCancellation()
+    {
+        var config = new PluginConfiguration { BrowserBridgeUrl = "http://bridge:3000/", BrowserBridgeToken = "secret", RequestTimeoutSeconds = 60 };
+        using var client = new JableHttpClient(new QueueHandler(), () => config, new NeverEndingHandler());
+        using var cancellation = new CancellationTokenSource();
+
+        var request = client.GetHtmlAsync(new Uri("https://jable.tv/"), cancellation.Token);
+        cancellation.Cancel();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => request);
+    }
+
+    [Fact]
+    public async Task TestBridgeRequiresConfiguration()
+    {
+        using var client = CreateClient(new QueueHandler());
+
+        var error = await Assert.ThrowsAsync<JableRequestException>(() =>
+            client.TestBridgeAsync(CancellationToken.None));
+
+        Assert.Equal(JableFailureKind.Network, error.Kind);
+    }
 
     [Fact]
     public async Task GetHtmlFollowsThreeValidatedRedirects()
@@ -288,10 +404,12 @@ public sealed class JableHttpClientTests
     {
         private readonly Queue<Func<HttpResponseMessage>> _responses = new(responses);
 
+        public List<HttpRequestMessage> Requests { get; } = [];
         public List<Uri> RequestUris { get; } = [];
 
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
+            Requests.Add(request);
             RequestUris.Add(request.RequestUri!);
             return Task.FromResult(_responses.Dequeue().Invoke());
         }
