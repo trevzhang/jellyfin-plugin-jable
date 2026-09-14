@@ -14,3 +14,7 @@ dist/
 /tdd_red_check.py
 /test_jable_scraper.py
 /web.bak
+
+# NAS browser bridge runtime secrets and Chromium session state.
+/deploy/jable-browser/.env
+/deploy/jable-browser/config/
