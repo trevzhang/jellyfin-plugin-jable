@@ -34,13 +34,20 @@ public sealed class Plugin : BasePlugin<PluginConfiguration>, IHasWebPages
     public override void UpdateConfiguration(BasePluginConfiguration configuration)
     {
         if (configuration is not PluginConfiguration next) throw new ArgumentException("Invalid Jable configuration.", nameof(configuration));
-        next.Validate();
         if (next.UrlUsername is { } username) next.ProxyUsername = username;
         next.ProxyPassword = next.ClearPassword ? string.Empty : !string.IsNullOrEmpty(next.PasswordInput) ? next.PasswordInput : next.UrlPassword ?? Configuration.ProxyPassword;
         next.PasswordInput = null;
         next.ClearPassword = false;
         next.UrlPassword = null;
         next.UrlUsername = null;
+        next.BrowserBridgeToken = next.ClearBridgeToken
+            ? string.Empty
+            : !string.IsNullOrEmpty(next.BridgeTokenInput)
+                ? next.BridgeTokenInput
+                : Configuration.BrowserBridgeToken;
+        next.BridgeTokenInput = null;
+        next.ClearBridgeToken = false;
+        next.Validate();
         base.UpdateConfiguration(next);
     }
 

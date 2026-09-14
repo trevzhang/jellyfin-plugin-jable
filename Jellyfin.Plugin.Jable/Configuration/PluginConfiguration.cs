@@ -13,6 +13,8 @@ public sealed class PluginConfiguration : BasePluginConfiguration
     internal string? UrlUsername;
     internal string? PasswordInput;
     internal bool ClearPassword;
+    internal string? BridgeTokenInput;
+    internal bool ClearBridgeToken;
     /// <summary>Gets or sets the library that receives Jable metadata.</summary>
     public Guid SelectedLibraryId { get; set; } = Guid.Empty;
     /// <summary>Gets or sets the optional proxy URL.</summary>
@@ -44,6 +46,17 @@ public sealed class PluginConfiguration : BasePluginConfiguration
     /// <summary>Accepts an explicit password clear request.</summary>
     [XmlIgnore, JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
     public bool ClearProxyPassword { get => false; set => ClearPassword = value; }
+    /// <summary>Gets or sets the optional browser bridge URL.</summary>
+    public string BrowserBridgeUrl { get; set; } = string.Empty;
+    /// <summary>Gets or sets the optional browser bridge token.</summary>
+    [JsonIgnore]
+    public string BrowserBridgeToken { get; set; } = string.Empty;
+    /// <summary>Accepts a new browser bridge token without returning it in JSON or persisting the input field.</summary>
+    [XmlIgnore, JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? NewBrowserBridgeToken { get => null; set => BridgeTokenInput = value; }
+    /// <summary>Accepts an explicit browser bridge token clear request.</summary>
+    [XmlIgnore, JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    public bool ClearBrowserBridgeToken { get => false; set => ClearBridgeToken = value; }
     /// <summary>Gets or sets the number of recent catalog pages to fetch.</summary>
     public int RecentPageCount { get; set; } = 20;
     /// <summary>Gets or sets the request timeout in seconds.</summary>
@@ -54,6 +67,12 @@ public sealed class PluginConfiguration : BasePluginConfiguration
     internal void Validate()
     {
         if (ProxyUrl.Length > 0) JableHttpClient.ValidateProxyUri(ProxyUrl);
+        if (BrowserBridgeUrl.Length > 0)
+        {
+            JableHttpClient.ValidateBridgeUri(BrowserBridgeUrl);
+            if (string.IsNullOrEmpty(BrowserBridgeToken) && string.IsNullOrEmpty(BridgeTokenInput))
+                throw new ArgumentException("Browser bridge token is required when a bridge URL is configured.");
+        }
         if (RecentPageCount is < 1 or > 100 || RequestTimeoutSeconds is < 5 or > 60 || MinimumRequestIntervalMs < 250)
             throw new ArgumentException("Recent pages must be 1–100, timeout 5–60 seconds, and request interval at least 250 ms.");
     }

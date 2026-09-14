@@ -1,5 +1,8 @@
 using Jellyfin.Plugin.Jable.Configuration;
 using Jellyfin.Plugin.Jable;
+using MediaBrowser.Common.Configuration;
+using MediaBrowser.Model.Serialization;
+using System.Reflection;
 using Xunit;
 
 namespace Jellyfin.Plugin.Jable.Tests;
@@ -15,6 +18,54 @@ public sealed class ConfigurationTests
         Assert.Equal(20, config.RecentPageCount);
         Assert.Equal(15, config.RequestTimeoutSeconds);
         Assert.Equal(750, config.MinimumRequestIntervalMs);
+    }
+
+    [Fact]
+    public void BrowserBridgeDefaultsAreDisabled()
+    {
+        var config = new PluginConfiguration();
+        Assert.Equal(string.Empty, config.BrowserBridgeUrl);
+        Assert.Equal(string.Empty, config.BrowserBridgeToken);
+    }
+
+    [Fact]
+    public void BrowserBridgeTokenIsExcludedFromConfigurationJson()
+    {
+        var json = System.Text.Json.JsonSerializer.Serialize(new PluginConfiguration
+        {
+            BrowserBridgeUrl = "http://bridge:3000/",
+            BrowserBridgeToken = "secret"
+        });
+        Assert.Contains("BrowserBridgeUrl", json);
+        Assert.DoesNotContain("secret", json);
+        Assert.DoesNotContain("BrowserBridgeToken", json);
+    }
+
+    [Fact]
+    public void BrowserBridgeUpdateResolvesTokenBeforeValidating()
+    {
+        var plugin = CreatePlugin(new PluginConfiguration { BrowserBridgeUrl = "http://bridge:3000/", BrowserBridgeToken = "old-secret" });
+
+        plugin.UpdateConfiguration(new PluginConfiguration { BrowserBridgeUrl = "http://bridge:3000/" });
+        Assert.Equal("old-secret", plugin.Configuration.BrowserBridgeToken);
+
+        plugin.UpdateConfiguration(new PluginConfiguration { BrowserBridgeUrl = "http://bridge:3000/", NewBrowserBridgeToken = "new-secret" });
+        Assert.Equal("new-secret", plugin.Configuration.BrowserBridgeToken);
+
+        plugin.UpdateConfiguration(new PluginConfiguration { ClearBrowserBridgeToken = true });
+        Assert.Empty(plugin.Configuration.BrowserBridgeToken);
+    }
+
+    [Fact]
+    public void BrowserBridgeUpdateRejectsClearingTokenWhileUrlIsRetained()
+    {
+        var plugin = CreatePlugin(new PluginConfiguration { BrowserBridgeUrl = "http://bridge:3000/", BrowserBridgeToken = "secret" });
+
+        Assert.Throws<ArgumentException>(() => plugin.UpdateConfiguration(new PluginConfiguration
+        {
+            BrowserBridgeUrl = "http://bridge:3000/",
+            ClearBrowserBridgeToken = true
+        }));
     }
 
     [Fact]
@@ -53,5 +104,14 @@ public sealed class ConfigurationTests
         Assert.DoesNotContain("addEventListener('viewshow'", page);
         Assert.Contains("addEventListener('pageshow', loadConfiguration);", page);
         Assert.Contains("\n            loadConfiguration();", page);
+    }
+
+    private static Plugin CreatePlugin(PluginConfiguration saved)
+    {
+        var paths = DispatchProxy.Create<IApplicationPaths, FinalRegressionTests.Proxy>();
+        ((FinalRegressionTests.Proxy)(object)paths).Call = (_, _) => Path.GetTempPath();
+        var serializer = DispatchProxy.Create<IXmlSerializer, FinalRegressionTests.Proxy>();
+        ((FinalRegressionTests.Proxy)(object)serializer).Call = (method, _) => method.Name == "DeserializeFromFile" ? saved : null;
+        return new Plugin(paths, serializer);
     }
 }

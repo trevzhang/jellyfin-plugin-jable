@@ -13,6 +13,10 @@
                         <label for="library">Library</label>
                         <select id="library"><option value="">No library selected</option></select>
                     </div>
+                    <div class="inputContainer"><label for="browserBridgeUrl">Browser bridge URL</label><input id="browserBridgeUrl" type="url" placeholder="http://jable-browser-bridge:3000/"></div>
+                    <div class="inputContainer"><label for="browserBridgeToken">Browser bridge token</label><input id="browserBridgeToken" type="password" autocomplete="new-password"></div>
+                    <div class="checkboxContainer"><label><input id="clearBrowserBridgeToken" type="checkbox"> Clear saved browser bridge token</label></div>
+                    <button id="testBrowserBridge" is="emby-button" type="button" class="raised block">Test browser bridge</button>
                     <div class="inputContainer"><label for="proxyUrl">Proxy URL</label><input id="proxyUrl" type="url"></div>
                     <div class="inputContainer"><label for="proxyUsername">Proxy username</label><input id="proxyUsername" type="text"></div>
                     <div class="inputContainer"><label for="proxyPassword">Proxy password</label><input id="proxyPassword" type="password" autocomplete="new-password"></div>
@@ -45,6 +49,9 @@
                     option.selected = option.value === config.SelectedLibraryId;
                     library.append(option);
                 }
+                form.querySelector('#browserBridgeUrl').value = config.BrowserBridgeUrl || '';
+                form.querySelector('#browserBridgeToken').value = '';
+                form.querySelector('#clearBrowserBridgeToken').checked = false;
                 form.querySelector('#proxyUrl').value = config.ProxyUrl;
                 form.querySelector('#proxyUsername').value = config.ProxyUsername;
                 form.querySelector('#proxyPassword').value = '';
@@ -60,6 +67,9 @@
             form.addEventListener('submit', async event => {
                 event.preventDefault();
                 config.SelectedLibraryId = form.querySelector('#library').value || '00000000-0000-0000-0000-000000000000';
+                config.BrowserBridgeUrl = form.querySelector('#browserBridgeUrl').value.trim();
+                config.NewBrowserBridgeToken = form.querySelector('#browserBridgeToken').value;
+                config.ClearBrowserBridgeToken = form.querySelector('#clearBrowserBridgeToken').checked;
                 config.ProxyUrl = form.querySelector('#proxyUrl').value.trim();
                 config.ProxyUsername = form.querySelector('#proxyUsername').value.trim();
                 const password = form.querySelector('#proxyPassword').value;
@@ -69,6 +79,8 @@
                 config.RequestTimeoutSeconds = Math.min(60, Math.max(5, Number(form.querySelector('#timeout').value)));
                 config.MinimumRequestIntervalMs = Math.max(250, Number(form.querySelector('#requestInterval').value));
                 await ApiClient.updatePluginConfiguration(pluginId, config);
+                form.querySelector('#browserBridgeToken').value = '';
+                form.querySelector('#clearBrowserBridgeToken').checked = false;
                 form.querySelector('#proxyPassword').value = '';
                 form.querySelector('#clearProxyPassword').checked = false;
                 Dashboard.alert('Restart Jellyfin to apply proxy changes');
