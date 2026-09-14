@@ -53,6 +53,9 @@ function fakeTransport(page) {
           requestId: 'pending-1', request: { url: `https://${page.pendingHost}/asset.js` }
         } })
       }));
+      if (request.method === 'Page.navigate') for (const method of page.networkEvents || []) queueMicrotask(() => this.#emit('message', {
+        data: JSON.stringify({ method, params: { requestId: 'pending-1' } })
+      }));
       if (request.method === 'Runtime.evaluate' && page.pendingHost) return;
       const result = request.method === 'Runtime.evaluate'
         ? { result: { value: JSON.stringify(page) } }
@@ -118,4 +121,56 @@ test('timeout names the pending Jable resource host', async () => {
     WebSocketImpl: transport.FakeSocket, timeoutMs: 20
   });
   await assert.rejects(renderer.render('https://jable.tv/latest-updates/'), /assets-cdn\.jable\.tv/);
+});
+
+test('render does not wait for a stalled target close', async () => {
+  const transport = fakeTransport({
+    readyState: 'complete', url: 'https://jable.tv/latest-updates/', html: '<html></html>'
+  });
+  let closeSignal;
+  const renderer = new ChromiumRenderer({
+    browserUrl: 'http://chromium:9222',
+    fetchImpl: (url, options = {}) => {
+      if (url.includes('/json/close/')) {
+        closeSignal = options.signal;
+        return new Promise(() => {});
+      }
+      return transport.fetchImpl(url, options);
+    },
+    WebSocketImpl: transport.FakeSocket,
+    timeoutMs: 1000
+  });
+  const result = await Promise.race([
+    renderer.render('https://jable.tv/latest-updates/'),
+    new Promise((_, reject) => setTimeout(() => reject(new Error('target close blocked render')), 50))
+  ]);
+  assert.deepEqual(result, { url: 'https://jable.tv/latest-updates/', html: '<html></html>' });
+  assert.ok(closeSignal);
+});
+
+test('timeout keeps a host pending after response headers', async () => {
+  const transport = fakeTransport({
+    pendingHost: 'assets-cdn.jable.tv', networkEvents: ['Network.responseReceived']
+  });
+  const renderer = new ChromiumRenderer({
+    browserUrl: 'http://chromium:9222', fetchImpl: transport.fetchImpl,
+    WebSocketImpl: transport.FakeSocket, timeoutMs: 20
+  });
+  await assert.rejects(renderer.render('https://jable.tv/latest-updates/'), /assets-cdn\.jable\.tv/);
+});
+
+test('timeout drops a host after loading finishes', async () => {
+  const transport = fakeTransport({
+    pendingHost: 'assets-cdn.jable.tv',
+    networkEvents: ['Network.responseReceived', 'Network.loadingFinished']
+  });
+  const renderer = new ChromiumRenderer({
+    browserUrl: 'http://chromium:9222', fetchImpl: transport.fetchImpl,
+    WebSocketImpl: transport.FakeSocket, timeoutMs: 20
+  });
+  await assert.rejects(renderer.render('https://jable.tv/latest-updates/'), error => {
+    assert.equal(error.name, 'TimeoutError');
+    assert.doesNotMatch(error.message, /assets-cdn\.jable\.tv/);
+    return true;
+  });
 });

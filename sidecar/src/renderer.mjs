@@ -85,7 +85,7 @@ export class ChromiumRenderer {
         const requestUrl = message.params.request.url;
         if (isAllowedJableUrl(requestUrl)) pendingRequests.set(message.params.requestId, new URL(requestUrl).hostname);
       }
-      if (message.method === 'Network.responseReceived') pendingRequests.delete(message.params.requestId);
+      if (message.method === 'Network.loadingFinished') pendingRequests.delete(message.params.requestId);
       if (message.method === 'Network.loadingFailed') {
         const host = pendingRequests.get(message.params.requestId);
         if (host) failedHosts.add(host);
@@ -124,7 +124,9 @@ export class ChromiumRenderer {
       throw error;
     } finally {
       cdp.close();
-      await this.fetch(`${this.browserUrl}/json/close/${encodeURIComponent(target.id)}`).catch(() => {});
+      void this.fetch(`${this.browserUrl}/json/close/${encodeURIComponent(target.id)}`, {
+        signal: AbortSignal.timeout(this.timeoutMs)
+      }).catch(() => {});
     }
   }
 }
