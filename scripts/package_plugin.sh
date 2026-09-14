@@ -8,7 +8,8 @@ package="$repo/dist/jellyfin-plugin-jable-$version.zip"
 
 docker run --rm -v "$repo:/src" -w /src mcr.microsoft.com/dotnet/sdk:8.0 \
     dotnet test Jellyfin.Plugin.Jable.sln -c Release
-node --test web-tests/jable.test.mjs
+docker run --rm -v "$repo:/src" -w /src node:22-alpine sh -c \
+    'node --test web-tests/jable.test.mjs && npm --prefix sidecar test'
 python3 scripts/merge_web_config.py --self-test
 
 mkdir -p dist

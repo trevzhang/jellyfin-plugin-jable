@@ -1,6 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { execFile as execFileCallback } from 'node:child_process';
+import { promisify } from 'node:util';
 import { ChromiumRenderer, isAllowedJableUrl } from '../src/renderer.mjs';
+
+const execFile = promisify(execFileCallback);
 
 test('URL allowlist accepts only HTTPS Jable hosts without credentials', () => {
   assert.equal(isAllowedJableUrl('https://jable.tv/latest-updates/'), true);
@@ -22,6 +26,17 @@ test('health requires a browser websocket endpoint', async () => {
     }
   });
   await assert.rejects(renderer.health(), /webSocketDebuggerUrl/);
+});
+
+test('failed target creation clears the render timeout', async () => {
+  await execFile(process.execPath, ['--input-type=module', '--eval', `
+    import { ChromiumRenderer } from ${JSON.stringify(new URL('../src/renderer.mjs', import.meta.url).href)};
+    const renderer = new ChromiumRenderer({
+      browserUrl: 'http://chromium:9222', timeoutMs: 1000,
+      fetchImpl: async () => { throw new Error('offline'); }
+    });
+    await renderer.render('https://jable.tv/latest-updates/').catch(() => {});
+  `], { timeout: 300 });
 });
 
 function fakeTransport(page) {
