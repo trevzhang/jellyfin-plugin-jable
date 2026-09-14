@@ -7,7 +7,7 @@ A Jellyfin 10.10.7 metadata provider and searchable Jable catalog for locally ma
 - Strict identifier matching before automatic metadata updates.
 - Title, release date, performers, genres, studio, duration, and poster metadata when available.
 - Searchable Web catalog with local/online filters and sorting by date, Jable views, or favorites.
-- HTTP, HTTPS, and SOCKS5 proxy support.
+- Browser-bridge metadata retrieval through a local Chromium sidecar, with optional HTTP, HTTPS, and SOCKS5 proxy compatibility.
 - Atomic local cache with recovery and read-only degradation on corruption.
 - No online playback or download functionality.
 
@@ -27,7 +27,10 @@ A Jellyfin 10.10.7 metadata provider and searchable Jable catalog for locally ma
    ```
 
 3. Open **Catalog**, install **Jable**, and restart Jellyfin.
-4. Open the plugin configuration, select the target library, and configure a proxy when required.
+4. Deploy the browser bridge on the same Docker network as Jellyfin (see [deploy/jable-browser](deploy/jable-browser/README.md)). Set the plugin bridge URL to `http://jable-browser-bridge:3000/`, then select the target library.
+5. A proxy remains supported for compatible installations, but is not needed for Jable traffic with the browser bridge deployment.
+
+The browser GUI is available at `https://NAS_IP:3100/`. Sign in with the credentials in `deploy/jable-browser/.env`, then complete any manual Jable/Cloudflare challenge in that GUI before retrying the plugin request. Do not expose CDP port 9222 or the bridge to the host network.
 
 Jellyfin 10.10 cannot add a normal-user menu entry from a server plugin. To add the catalog link, merge this entry into the persistent Jellyfin Web `config.json` and mount that file read-only into the container:
 
@@ -60,6 +63,9 @@ Docker is sufficient; a host .NET SDK is not required.
 
 - Jable credentials are not used or stored.
 - Proxy passwords are excluded from the JSON configuration API but remain plaintext in Jellyfin's XML plugin configuration because Jellyfin 10.10 has no plugin secret store. Protect the configuration directory with filesystem permissions.
+- The bridge token is also stored in that XML configuration in plaintext. Use a long random token and protect the configuration directory with filesystem permissions.
+- The deployment's static Jable IP overrides can go stale. Refresh them with the trusted DoH commands in [deploy/jable-browser](deploy/jable-browser/README.md#refresh-static-jable-ips), update `.env`, and recreate `chromium` and `bridge`.
+- `docker.1ms.run` is only a Docker image-pull mirror; it is not used to proxy Jable traffic.
 - The catalog API follows the selected Jellyfin library's user access policy.
 - The plugin does not bypass CAPTCHA or Cloudflare challenges.
 

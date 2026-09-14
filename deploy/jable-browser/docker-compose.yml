@@ -1,0 +1,46 @@
+services:
+  chromium:
+    image: ${CHROMIUM_IMAGE}
+    container_name: jable-browser
+    environment:
+      - USER_ID=1000
+      - GROUP_ID=10
+      - TZ=Asia/Shanghai
+      - KEEP_APP_RUNNING=1
+      - WEB_AUTHENTICATION=1
+      - WEB_AUTHENTICATION_USERNAME=${CHROMIUM_WEB_USER}
+      - WEB_AUTHENTICATION_PASSWORD=${CHROMIUM_WEB_PASSWORD}
+      - SECURE_CONNECTION=1
+      - CHROMIUM_REMOTE_DEBUGGING=1
+    volumes:
+      - ./config:/config:rw
+    ports:
+      - 3100:5800
+    expose:
+      - "9222"
+    shm_size: 1gb
+    restart: unless-stopped
+    extra_hosts:
+      - "jable.tv:${JABLE_EDGE_IP}"
+      - "www.jable.tv:${JABLE_EDGE_IP}"
+      - "assets.jable.tv:${JABLE_EDGE_IP}"
+      - "assets-cdn.jable.tv:${JABLE_ASSET_CDN_IP}"
+    networks: [jable-internal]
+
+  bridge:
+    build:
+      context: ../../sidecar
+      args:
+        NODE_IMAGE: ${NODE_IMAGE}
+    container_name: jable-browser-bridge
+    environment:
+      - CHROMIUM_URL=http://chromium:9222
+      - BRIDGE_TOKEN=${BRIDGE_TOKEN}
+      - RENDER_TIMEOUT_MS=60000
+    depends_on: [chromium]
+    restart: unless-stopped
+    networks: [jable-internal]
+
+networks:
+  jable-internal:
+    external: true
