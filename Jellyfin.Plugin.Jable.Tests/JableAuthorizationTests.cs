@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Http.Headers;
+using System.Net.Http.Json;
 using System.Reflection;
 using System.Security.Claims;
 using Jellyfin.Data.Entities;
@@ -32,6 +33,8 @@ public sealed class JableAuthorizationTests : IDisposable
     private readonly List<Uri> _imageRequests = [];
     private readonly List<Type> _queuedTasks = [];
     private Func<HttpResponseMessage> _imageResponse = () => new(HttpStatusCode.OK) { Content = new ByteArrayContent([1, 2, 3]) };
+    private int _bridgeRequests;
+    private Func<HttpResponseMessage> _bridgeResponse = () => new(HttpStatusCode.BadGateway);
     private bool _userExists = true;
     private int _htmlRequests;
     private IScheduledTaskWorker[] _workers = [];
@@ -68,7 +71,13 @@ public sealed class JableAuthorizationTests : IDisposable
             Assert.False(request.Headers.Contains("X-Emby-Token"));
             _imageRequests.Add(request.RequestUri!);
             return _imageResponse();
-        }), () => _config);
+        }), () => _config, new ImageHandler(request =>
+        {
+            _bridgeRequests++;
+            Assert.Equal("Bearer", request.Headers.Authorization?.Scheme);
+            Assert.Equal("secret", request.Headers.Authorization?.Parameter);
+            return _bridgeResponse();
+        }));
         _controller = new JableController(catalog, access, users, tasks, _client)
         {
             ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext { User = Principal(_user.Id.ToString("N")) } },
@@ -106,8 +115,38 @@ public sealed class JableAuthorizationTests : IDisposable
         Assert.NotNull(typeof(JableController).GetCustomAttribute<AuthorizeAttribute>());
         foreach (var name in new[] { "GetPage", "GetAsset" })
             Assert.NotNull(typeof(JableController).GetMethod(name)!.GetCustomAttribute<AllowAnonymousAttribute>());
-        foreach (var name in new[] { "GetCatalog", "GetWork", "GetImage", "GetStatus", "Sync", "ClearSearch" })
+        foreach (var name in new[] { "GetCatalog", "GetWork", "GetImage", "GetStatus", "Sync", "ClearSearch", "TestBridge" })
             Assert.Null(typeof(JableController).GetMethod(name)!.GetCustomAttribute<AllowAnonymousAttribute>());
+    }
+
+    [Fact]
+    public async Task OrdinaryUserCannotTestBrowserBridge()
+    {
+        _config.BrowserBridgeUrl = "http://bridge:3000/";
+        _config.BrowserBridgeToken = "secret";
+        Assert.IsType<ForbidResult>(await _controller.TestBridge(CancellationToken.None));
+        Assert.Equal(0, _bridgeRequests);
+    }
+
+    [Fact]
+    public async Task AdministratorCanTestBrowserBridgeWithoutSelectedLibrary()
+    {
+        _policy.IsAdministrator = true;
+        _config.SelectedLibraryId = Guid.Empty;
+        _config.BrowserBridgeUrl = "http://bridge:3000/";
+        _config.BrowserBridgeToken = "secret";
+        _bridgeResponse = () => new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = JsonContent.Create(new
+            {
+                url = "https://jable.tv/latest-updates/",
+                html = "<html><body>rendered</body></html>"
+            })
+        };
+
+        var result = Assert.IsType<OkObjectResult>(await _controller.TestBridge(CancellationToken.None));
+        Assert.Equal(200, result.StatusCode ?? 200);
+        Assert.Equal(1, _bridgeRequests);
     }
 
     [Theory]

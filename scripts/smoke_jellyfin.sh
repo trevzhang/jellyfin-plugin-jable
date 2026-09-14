@@ -107,20 +107,30 @@ print('PASS: Jellyfin 10.10.7; Page 200; unknown asset 404; menu; controller/Lib
 config_path = '/Plugins/7378435d-77d2-4ef4-8e7f-c1269f624b24/Configuration'
 config = request(config_path)
 assert 'ProxyPassword' not in config
+assert 'BrowserBridgeToken' not in config and 'NewBrowserBridgeToken' not in config
+request('/Jable/Bridge/Test', {}, 502)
+bridge_secret = secrets.token_urlsafe(20)
+request(config_path, dict(config, BrowserBridgeUrl='http://127.0.0.1:3103/', NewBrowserBridgeToken=bridge_secret), 204)
+config = request(config_path)
+assert config['BrowserBridgeUrl'] == 'http://127.0.0.1:3103/'
+assert bridge_secret not in json.dumps(config) and 'BrowserBridgeToken' not in config and 'NewBrowserBridgeToken' not in config
+xml_path, = Path(sys.argv[2], 'config').rglob('Jellyfin.Plugin.Jable.xml')
+def persisted_bridge_token():
+    return ET.parse(xml_path).getroot().findtext('BrowserBridgeToken') or ''
+assert persisted_bridge_token() == bridge_secret
 request(config_path, dict(config, SelectedLibraryId='aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'), 204)
 sync_status = request('/Jable/Status')
 sync_task = next(task for task in tasks if task['Key'] == 'JableCatalogSync')
 assert sync_status['CanManage'] is True and sync_status['SyncTaskId'] == sync_task['Id']
 assert sync_status['IsSyncRunning'] is False
-request(config_path, config, 204)  # Restore the unconfigured test instance; no remote sync is queued.
-print('PASS: administrator status exposes the registered Jable worker ID; unconfigured Status and Sync fail closed')
+request(config_path, config, 204)  # Restore no selected library; no remote sync is queued.
+print('PASS: administrator bridge test bypasses library access; bridge token persists only in XML; status exposes the registered Jable worker ID')
 secret = secrets.token_urlsafe(20)
 config.update(ProxyUrl='http://smoke-user:' + secret + '@127.0.0.1:1080', ProxyUsername='')
 request(config_path, config, 204)
 config = request(config_path)
 assert config['ProxyUrl'] == 'http://127.0.0.1:1080/' and config['ProxyUsername'] == 'smoke-user'
 assert secret not in json.dumps(config) and 'ProxyPassword' not in config and 'NewProxyPassword' not in config
-xml_path, = Path(sys.argv[2], 'config').rglob('Jellyfin.Plugin.Jable.xml')
 def persisted_secret():
     return ET.parse(xml_path).getroot().findtext('ProxyPassword') or ''
 assert persisted_secret() == secret
@@ -151,7 +161,12 @@ for fields in ({'ProxyUrl': 'ftp://127.0.0.1'}, {'ProxyUrl': 'http://127.0.0.1/p
     assert request(config_path) == config, 'rejected config replaced current settings'
     assert xml_path.read_bytes() == before, 'rejected config modified XML'
 request(config_path, dict(config, ProxyUrl='', ProxyUsername=''), 204)
-print('PASS: real plugin configuration GET/POST; JSON secret redaction; URL credential split; user@ and user:@ preserve XML password; XML preserve/replace/clear; seven invalid saves rejected without mutation')
+config = request(config_path)
+request(config_path, dict(config, BrowserBridgeUrl='', ClearBrowserBridgeToken=True), 204)
+config = request(config_path)
+assert config['BrowserBridgeUrl'] == '' and persisted_bridge_token() == ''
+assert bridge_secret not in json.dumps(config) and 'BrowserBridgeToken' not in config and 'NewBrowserBridgeToken' not in config
+print('PASS: real plugin configuration GET/POST; JSON secret redaction; bridge XML persist/clear; URL credential split; user@ and user:@ preserve XML password; proxy XML preserve/replace/clear; seven invalid saves rejected without mutation')
 PY
 python3 - "$temporary/container.log" <<'PY'
 from pathlib import Path

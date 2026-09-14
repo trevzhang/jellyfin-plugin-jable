@@ -64,6 +64,23 @@
             document.querySelector('#JableConfigPage').addEventListener('pageshow', loadConfiguration);
             loadConfiguration();
 
+            form.querySelector('#testBrowserBridge').addEventListener('click', async () => {
+                const button = form.querySelector('#testBrowserBridge');
+                button.disabled = true;
+                try {
+                    const response = await ApiClient.ajax({
+                        type: 'POST',
+                        url: ApiClient.getUrl('Jable/Bridge/Test'),
+                        dataType: 'json'
+                    });
+                    Dashboard.alert(response?.Ok ? 'Browser bridge connection succeeded' : 'Browser bridge connection failed');
+                } catch {
+                    Dashboard.alert('Browser bridge connection failed');
+                } finally {
+                    button.disabled = false;
+                }
+            });
+
             form.addEventListener('submit', async event => {
                 event.preventDefault();
                 config.SelectedLibraryId = form.querySelector('#library').value || '00000000-0000-0000-0000-000000000000';

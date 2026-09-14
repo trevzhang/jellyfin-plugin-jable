@@ -146,12 +146,28 @@ public sealed class JableController(JableCatalogService catalog, LibraryAccessSe
         return NoContent();
     }
 
-    private IActionResult? AuthorizeUser(out User? user, bool administrator = false)
+    [HttpPost("Bridge/Test")]
+    public async Task<IActionResult> TestBridge(CancellationToken cancellationToken)
+    {
+        if (AuthorizeUser(out _, administrator: true, requireLibrary: false) is { } rejection) return rejection;
+        try
+        {
+            await client.TestBridgeAsync(cancellationToken).ConfigureAwait(false);
+            return Ok(new { Ok = true });
+        }
+        catch (Exception exception) when (exception is JableRequestException or HttpRequestException)
+        {
+            return StatusCode(StatusCodes.Status502BadGateway, new { Ok = false, Error = exception.Message });
+        }
+    }
+
+    private IActionResult? AuthorizeUser(out User? user, bool administrator = false, bool requireLibrary = true)
     {
         Response.Headers.CacheControl = "no-store";
         user = JableAuthorization.GetUserId(User) is { } id ? users.GetUserById(id) : null;
         if (user is null) return Unauthorized();
-        if (!access.CanAccess(user) || (administrator && !JableAuthorization.IsAdministrator(users.GetUserDto(user).Policy))) return Forbid();
+        if ((requireLibrary && !access.CanAccess(user))
+            || (administrator && !JableAuthorization.IsAdministrator(users.GetUserDto(user).Policy))) return Forbid();
         return null;
     }
 
