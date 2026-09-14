@@ -58,19 +58,30 @@ public sealed class JableHttpClientTests
     }
 
     [Theory]
+    [InlineData(HttpStatusCode.Found)]
     [InlineData(HttpStatusCode.Unauthorized)]
     [InlineData(HttpStatusCode.BadGateway)]
     [InlineData(HttpStatusCode.GatewayTimeout)]
     public async Task BridgeStatusFailuresRemainNetworkFailures(HttpStatusCode status)
     {
         var config = new PluginConfiguration { BrowserBridgeUrl = "http://bridge:3000/", BrowserBridgeToken = "secret" };
-        using var client = new JableHttpClient(new QueueHandler(), () => config,
-            new QueueHandler(() => new HttpResponseMessage(status)));
+        var bridge = new QueueHandler(() => new HttpResponseMessage(status));
+        using var client = new JableHttpClient(new QueueHandler(), () => config, bridge);
 
         var error = await Assert.ThrowsAsync<JableRequestException>(() =>
             client.GetHtmlAsync(new Uri("https://jable.tv/latest-updates/"), CancellationToken.None));
 
         Assert.Equal(JableFailureKind.Network, error.Kind);
+        Assert.Single(bridge.RequestUris);
+    }
+
+    [Fact]
+    public void BuildBridgeHandlerDisablesRedirectsAndProxy()
+    {
+        using var handler = JableHttpClient.BuildBridgeHandler();
+
+        Assert.False(handler.AllowAutoRedirect);
+        Assert.False(handler.UseProxy);
     }
 
     [Fact]

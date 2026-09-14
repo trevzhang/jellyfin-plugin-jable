@@ -36,12 +36,18 @@ public sealed class JableHttpClient : IDisposable
         ArgumentNullException.ThrowIfNull(handler);
         ArgumentNullException.ThrowIfNull(configuration);
         _client = new HttpClient(handler, disposeHandler: true) { Timeout = Timeout.InfiniteTimeSpan };
-        _bridgeClient = new HttpClient(bridgeHandler ?? new SocketsHttpHandler { UseProxy = false }, disposeHandler: true)
+        _bridgeClient = new HttpClient(bridgeHandler ?? BuildBridgeHandler(), disposeHandler: true)
         {
             Timeout = Timeout.InfiniteTimeSpan
         };
         _configuration = configuration;
     }
+
+    public static SocketsHttpHandler BuildBridgeHandler() => new()
+    {
+        AllowAutoRedirect = false,
+        UseProxy = false,
+    };
 
     public static SocketsHttpHandler BuildHandler(PluginConfiguration config)
     {
