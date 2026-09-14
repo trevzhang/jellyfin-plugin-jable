@@ -49,14 +49,22 @@ export function createBridgeServer({ renderer, token, logger = console }) {
   return http.createServer(async (request, response) => {
     const requestId = randomUUID();
     const startedAt = Date.now();
+    const path = new URL(request.url, 'http://bridge').pathname;
+    let logged = false;
+    const log = () => {
+      if (logged) return;
+      logged = true;
+      logger.info({
+        requestId,
+        method: request.method,
+        path,
+        status: response.statusCode,
+        durationMs: Date.now() - startedAt
+      });
+    };
     response.setHeader('x-request-id', requestId);
-    response.once('finish', () => logger.info({
-      requestId,
-      method: request.method,
-      path: request.url,
-      status: response.statusCode,
-      durationMs: Date.now() - startedAt
-    }));
+    response.once('finish', log);
+    response.once('close', log);
     const signal = requestSignal(request);
     try {
       if (request.method === 'GET' && request.url === '/healthz') {
@@ -68,7 +76,7 @@ export function createBridgeServer({ renderer, token, logger = console }) {
       if (request.headers.authorization !== `Bearer ${token}`)
         return json(response, 401, { code: 'unauthorized', message: 'Bearer token is invalid.' });
       const body = await readJson(request);
-      if (!isAllowedJableUrl(body.url))
+      if (!body || typeof body !== 'object' || Array.isArray(body) || !Object.hasOwn(body, 'url') || !isAllowedJableUrl(body.url))
         return json(response, 400, { code: 'invalid_request', message: 'Jable URL is not allowed.' });
       const result = await serialized(() => renderer.render(body.url, signal));
       return json(response, 200, result);
