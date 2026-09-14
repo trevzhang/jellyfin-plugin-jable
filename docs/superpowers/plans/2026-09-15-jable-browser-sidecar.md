@@ -1410,7 +1410,7 @@ git commit -m "docs: add NAS browser bridge deployment"
 
 ---
 
-### Task 7: Package, Publish, and Deploy Version 0.1.6
+### Task 7: Prepare Version 0.1.6 Locally
 
 **Files:**
 - Modify: `scripts/package_plugin.sh`
@@ -1420,8 +1420,7 @@ git commit -m "docs: add NAS browser bridge deployment"
 
 **Interfaces:**
 - Produces: `dist/jellyfin-plugin-jable-0.1.6.zip`
-- Produces: GitHub release `v0.1.6`
-- Produces: working NAS sync through `http://jable-browser-bridge:3000/`
+- Produces: committed release metadata ready for final branch review
 
 - [ ] **Step 1: Update package and smoke versions to 0.1.6**
 
@@ -1491,7 +1490,13 @@ git status --short
 
 Expected: both scripts PASS; only ignored `dist/` artifacts remain outside Git tracking.
 
-- [ ] **Step 7: Push code and publish GitHub release**
+---
+
+## Post-Review Release and NAS Deployment
+
+Execute this section only after all seven tasks pass their task reviews, the whole-branch review is clean, and `feat/browser-sidecar` has been integrated into local `main`.
+
+- [ ] **Step 1: Push code and publish GitHub release**
 
 ```bash
 git push origin main
@@ -1508,7 +1513,7 @@ gh release view v0.1.6 --repo trevzhang/jellyfin-plugin-jable
 curl -fsSI https://github.com/trevzhang/jellyfin-plugin-jable/releases/download/v0.1.6/jellyfin-plugin-jable-0.1.6.zip
 ```
 
-- [ ] **Step 8: Replace the validation container with the final browser project**
+- [ ] **Step 2: Replace the validation container with the final browser project**
 
 On NAS:
 
@@ -1518,7 +1523,7 @@ On NAS:
 4. Confirm `jable-browser`, `jable-browser-bridge`, and `jellyfin-app-1` are running.
 5. Confirm host port `3100` is open and host port `9222` is closed.
 
-- [ ] **Step 9: Install plugin v0.1.6 and configure bridge**
+- [ ] **Step 3: Install plugin v0.1.6 and configure bridge**
 
 In Jellyfin:
 
@@ -1531,7 +1536,7 @@ In Jellyfin:
 
 Expected: success message without a proxy URL.
 
-- [ ] **Step 10: Run the production synchronization smoke test**
+- [ ] **Step 4: Run the production synchronization smoke test**
 
 1. Open `/Jable/Page` as an administrator.
 2. Click `立即同步`.
@@ -1540,7 +1545,7 @@ Expected: success message without a proxy URL.
 5. Confirm the catalog contains at least one recent item with number, title, actresses, view count, and favorite count.
 6. Restart the browser project and repeat one synchronization to confirm profile persistence.
 
-- [ ] **Step 11: Final security check**
+- [ ] **Step 5: Final security check**
 
 Verify:
 
