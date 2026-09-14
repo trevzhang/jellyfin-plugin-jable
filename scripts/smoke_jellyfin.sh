@@ -45,6 +45,7 @@ from pathlib import Path
 from http.client import HTTPException
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, build_opener, ProxyHandler
+from uuid import UUID
 
 base = 'http://127.0.0.1:' + sys.argv[1]
 opener = build_opener(ProxyHandler({}))
@@ -93,7 +94,7 @@ request('/Startup/User', {'Name': 'smoke', 'Password': password}, 204)
 request('/Startup/RemoteAccess', {'EnableRemoteAccess': False, 'EnableAutomaticPortMapping': False}, 204)
 request('/Startup/Complete', {}, 204)
 token = request('/Users/AuthenticateByName', {'Username': 'smoke', 'Pw': password})['AccessToken']
-plugin = next(plugin for plugin in request('/Plugins') if plugin['Id'] == '7378435d-77d2-4ef4-8e7f-c1269f624b24')
+plugin = next(plugin for plugin in request('/Plugins') if UUID(plugin['Id']) == UUID('7378435d-77d2-4ef4-8e7f-c1269f624b24'))
 assert plugin['Name'] == 'Jable' and plugin['Version'] == '0.1.6.0', plugin
 tasks = request('/ScheduledTasks')
 assert any(task['Key'] == 'JableCatalogSync' for task in tasks), 'scheduled task activation missing'

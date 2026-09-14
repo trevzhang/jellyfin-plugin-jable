@@ -12,8 +12,8 @@
         "changelog": "Route Jable synchronization through a persistent Chromium bridge",
         "targetAbi": "10.10.7.0",
         "sourceUrl": "https://github.com/trevzhang/jellyfin-plugin-jable/releases/download/v0.1.6/jellyfin-plugin-jable-0.1.6.zip",
-        "checksum": "99cc812123c9645cdaadb3116f422963",
-        "timestamp": "2026-09-14T20:22:38Z"
+        "checksum": "f34eda98a8bd8ce4952a1547a4c54d39",
+        "timestamp": "2026-09-14T20:56:26Z"
       },
       {
         "version": "0.1.5.0",
