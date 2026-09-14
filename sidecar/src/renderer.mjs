@@ -1,3 +1,6 @@
+import { lookup } from 'node:dns/promises';
+import { isIP } from 'node:net';
+
 const MAX_HTML_BYTES = 4 * 1024 * 1024;
 
 function byteLength(value) {
@@ -53,15 +56,27 @@ export function isAllowedJableUrl(value) {
 }
 
 export class ChromiumRenderer {
-  constructor({ browserUrl, fetchImpl = fetch, WebSocketImpl = WebSocket, timeoutMs = 60_000 }) {
+  constructor({ browserUrl, fetchImpl = fetch, WebSocketImpl = WebSocket, lookupImpl = lookup, timeoutMs = 60_000 }) {
     this.browserUrl = new URL(browserUrl).origin;
     this.fetch = fetchImpl;
     this.WebSocket = WebSocketImpl;
+    this.lookup = lookupImpl;
     this.timeoutMs = timeoutMs;
   }
 
+  async resolveBrowserUrl() {
+    const url = new URL(this.browserUrl);
+    const hostname = url.hostname.replace(/^\[|\]$/g, '');
+    if (!isIP(hostname)) {
+      const { address } = await this.lookup(hostname);
+      url.hostname = isIP(address) === 6 ? `[${address}]` : address;
+    }
+    return url;
+  }
+
   async health(signal) {
-    const response = await this.fetch(`${this.browserUrl}/json/version`, { signal });
+    const browserUrl = await this.resolveBrowserUrl();
+    const response = await this.fetch(`${browserUrl.origin}/json/version`, { signal });
     if (!response.ok) throw new Error(`Chromium health returned ${response.status}.`);
     const version = await response.json();
     if (!version.webSocketDebuggerUrl) throw new Error('Chromium health omitted webSocketDebuggerUrl.');
@@ -70,11 +85,13 @@ export class ChromiumRenderer {
   async render(value, signal) {
     if (!isAllowedJableUrl(value)) throw new Error('Jable URL is not allowed.');
     const timeout = new AbortController();
+    const interceptionFailure = new AbortController();
     const timeoutTimer = setTimeout(() => timeout.abort(), this.timeoutMs);
-    const combined = signal ? AbortSignal.any([signal, timeout.signal]) : timeout.signal;
+    const combined = AbortSignal.any([timeout.signal, interceptionFailure.signal, ...(signal ? [signal] : [])]);
     try {
+      const browserUrl = await this.resolveBrowserUrl();
       const created = await this.fetch(
-        `${this.browserUrl}/json/new?${encodeURIComponent('about:blank')}`,
+        `${browserUrl.origin}/json/new?${encodeURIComponent('about:blank')}`,
         { method: 'PUT', signal: combined }
       );
       if (!created.ok) throw new Error(`Chromium target creation returned ${created.status}.`);
@@ -82,21 +99,43 @@ export class ChromiumRenderer {
       if (!target.id || !target.webSocketDebuggerUrl) throw new Error('Chromium target response is invalid.');
       const pendingRequests = new Map();
       const failedHosts = new Set();
-      const cdp = connect(this.WebSocket, target.webSocketDebuggerUrl, combined, message => {
-        if (message.method === 'Network.requestWillBeSent') {
-          const requestUrl = message.params.request.url;
-          if (isAllowedJableUrl(requestUrl)) pendingRequests.set(message.params.requestId, new URL(requestUrl).hostname);
-        }
-        if (message.method === 'Network.loadingFinished') pendingRequests.delete(message.params.requestId);
-        if (message.method === 'Network.loadingFailed') {
-          const host = pendingRequests.get(message.params.requestId);
-          if (host) failedHosts.add(host);
-          pendingRequests.delete(message.params.requestId);
-        }
-      });
+      let cdp;
+      let mainFrameId;
+      let unsafeNavigation;
       try {
+        const socketUrl = new URL(target.webSocketDebuggerUrl);
+        socketUrl.host = browserUrl.host;
+        socketUrl.protocol = browserUrl.protocol === 'https:' ? 'wss:' : 'ws:';
+        cdp = connect(this.WebSocket, socketUrl.href, combined, message => {
+          if (message.method === 'Fetch.requestPaused') {
+            const { requestId, request, resourceType, frameId } = message.params;
+            const topLevel = resourceType === 'Document' && frameId === mainFrameId;
+            const allowed = isAllowedJableUrl(request.url)
+              || (!topLevel && /^(about:|data:|blob:)/.test(request.url));
+            if (topLevel && !allowed) unsafeNavigation = new Error('Chromium unsafe navigation: URL is not allowed.');
+            void cdp.command(allowed ? 'Fetch.continueRequest' : 'Fetch.failRequest',
+              allowed ? { requestId } : { requestId, errorReason: 'BlockedByClient' }
+            ).then(() => {
+              if (unsafeNavigation) interceptionFailure.abort(unsafeNavigation);
+            }).catch(error => interceptionFailure.abort(error));
+          }
+          if (message.method === 'Network.requestWillBeSent') {
+            const requestUrl = message.params.request.url;
+            if (isAllowedJableUrl(requestUrl)) pendingRequests.set(message.params.requestId, new URL(requestUrl).hostname);
+          }
+          if (message.method === 'Network.loadingFinished') pendingRequests.delete(message.params.requestId);
+          if (message.method === 'Network.loadingFailed') {
+            const host = pendingRequests.get(message.params.requestId);
+            if (host) failedHosts.add(host);
+            pendingRequests.delete(message.params.requestId);
+          }
+        });
         await cdp.command('Network.enable');
+        const { frameTree } = await cdp.command('Page.getFrameTree');
+        mainFrameId = frameTree.frame.id;
+        await cdp.command('Fetch.enable', { patterns: [{ urlPattern: '*', requestStage: 'Request' }] });
         const navigation = await cdp.command('Page.navigate', { url: value });
+        if (unsafeNavigation) throw unsafeNavigation;
         if (navigation.errorText) throw new Error(`Chromium navigation failed: ${navigation.errorText}.`);
         while (true) {
           combined.throwIfAborted();
@@ -104,6 +143,8 @@ export class ChromiumRenderer {
             expression: 'JSON.stringify({readyState:document.readyState,url:location.href,html:document.documentElement.outerHTML})',
             returnByValue: true
           });
+          if (unsafeNavigation) throw unsafeNavigation;
+          combined.throwIfAborted();
           const page = JSON.parse(result.result.value);
           if (page.readyState === 'complete') {
             if (!isAllowedJableUrl(page.url)) throw new Error('Chromium final URL is not allowed.');
@@ -116,6 +157,8 @@ export class ChromiumRenderer {
           });
         }
       } catch (error) {
+        if (unsafeNavigation) throw unsafeNavigation;
+        if (interceptionFailure.signal.aborted) throw interceptionFailure.signal.reason;
         if (combined.aborted) {
           const hosts = [...new Set([...failedHosts, ...pendingRequests.values()])].sort();
           throw new DOMException(
@@ -125,8 +168,8 @@ export class ChromiumRenderer {
         }
         throw error;
       } finally {
-        cdp.close();
-        void this.fetch(`${this.browserUrl}/json/close/${encodeURIComponent(target.id)}`, {
+        cdp?.close();
+        void this.fetch(`${browserUrl.origin}/json/close/${encodeURIComponent(target.id)}`, {
           signal: AbortSignal.timeout(this.timeoutMs)
         }).catch(() => {});
       }

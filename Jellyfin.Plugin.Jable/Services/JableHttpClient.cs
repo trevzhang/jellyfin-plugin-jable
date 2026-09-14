@@ -17,6 +17,8 @@ public sealed class JableHttpClient : IDisposable
     private const int MaxAttempts = 3;
     private const int MaxRedirects = 3;
     private const int MaxHtmlBytes = 4 * 1024 * 1024;
+    // JSON can encode one HTML byte as six bytes (\uXXXX), plus the URL and envelope.
+    private const int MaxBridgeJsonBytes = 6 * MaxHtmlBytes + 64 * 1024;
     private static readonly JsonSerializerOptions BridgeJsonOptions = new(JsonSerializerDefaults.Web);
     private readonly HttpClient _client;
     private readonly HttpClient _bridgeClient;
@@ -164,13 +166,14 @@ public sealed class JableHttpClient : IDisposable
             Content = JsonContent.Create(new BridgeRenderRequest(uri.AbsoluteUri))
         };
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", config.BrowserBridgeToken);
+        await ReserveRequestSlotAsync(cancellationToken).ConfigureAwait(false);
         using var response = await _bridgeClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken).ConfigureAwait(false);
         if (!response.IsSuccessStatusCode)
         {
             throw new JableRequestException(JableFailureKind.Network, $"Jable browser bridge returned {(int)response.StatusCode}.");
         }
 
-        var json = await ReadHtmlAsync(response.Content, cancellationToken).ConfigureAwait(false);
+        var json = await ReadTextAsync(response.Content, MaxBridgeJsonBytes, cancellationToken).ConfigureAwait(false);
         var rendered = JsonSerializer.Deserialize<BridgeRenderResponse>(json, BridgeJsonOptions)
             ?? throw new JableRequestException(JableFailureKind.Network, "Jable browser bridge returned invalid JSON.");
         if (!Uri.TryCreate(rendered.Url, UriKind.Absolute, out var finalUri) || !IsAllowedJableUri(finalUri))
@@ -240,7 +243,7 @@ public sealed class JableHttpClient : IDisposable
             {
                 try
                 {
-                    html = await ReadHtmlAsync(response.Content, cancellationToken).ConfigureAwait(false);
+                    html = await ReadTextAsync(response.Content, MaxHtmlBytes, cancellationToken).ConfigureAwait(false);
                     if (JableParser.IsChallengePage(html))
                     {
                         throw new JableRequestException(JableFailureKind.Challenge, "Jable returned a challenge page.");
@@ -306,11 +309,11 @@ public sealed class JableHttpClient : IDisposable
         return scope;
     }
 
-    private static async Task<string> ReadHtmlAsync(HttpContent content, CancellationToken cancellationToken)
+    private static async Task<string> ReadTextAsync(HttpContent content, int maxBytes, CancellationToken cancellationToken)
     {
-        if (content.Headers.ContentLength is > MaxHtmlBytes)
+        if (content.Headers.ContentLength > maxBytes)
         {
-            throw new JableRequestException(JableFailureKind.Network, "Jable HTML response is too large.");
+            throw new JableRequestException(JableFailureKind.Network, "Jable response is too large.");
         }
 
         await using var stream = await content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false);
@@ -320,10 +323,10 @@ public sealed class JableHttpClient : IDisposable
             using var buffer = new MemoryStream();
             while (true)
             {
-                var available = MaxHtmlBytes + 1 - buffer.Length;
+                var available = maxBytes + 1 - buffer.Length;
                 if (available <= 0)
                 {
-                    throw new JableRequestException(JableFailureKind.Network, "Jable HTML response is too large.");
+                    throw new JableRequestException(JableFailureKind.Network, "Jable response is too large.");
                 }
 
                 var read = await stream.ReadAsync(rented.AsMemory(0, (int)Math.Min(rented.Length, available)), cancellationToken).ConfigureAwait(false);
@@ -333,9 +336,9 @@ public sealed class JableHttpClient : IDisposable
                 }
 
                 buffer.Write(rented, 0, read);
-                if (buffer.Length > MaxHtmlBytes)
+                if (buffer.Length > maxBytes)
                 {
-                    throw new JableRequestException(JableFailureKind.Network, "Jable HTML response is too large.");
+                    throw new JableRequestException(JableFailureKind.Network, "Jable response is too large.");
                 }
             }
         }

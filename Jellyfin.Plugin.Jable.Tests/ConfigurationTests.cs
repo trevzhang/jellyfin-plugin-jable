@@ -10,6 +10,16 @@ namespace Jellyfin.Plugin.Jable.Tests;
 public sealed class ConfigurationTests
 {
     [Fact]
+    public void PluginReportsReleaseVersion()
+    {
+        var plugin = CreatePlugin(new PluginConfiguration());
+        Assert.Equal("0.1.6.0", plugin.Version.ToString());
+        var assembly = typeof(Plugin).Assembly;
+        Assert.Equal("0.1.6.0", assembly.GetCustomAttribute<AssemblyFileVersionAttribute>()?.Version);
+        Assert.Equal("0.1.6.0", assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion.Split('+')[0]);
+    }
+
+    [Fact]
     public void DefaultsAreSafeAndBounded()
     {
         var config = new PluginConfiguration();

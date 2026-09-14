@@ -93,6 +93,8 @@ request('/Startup/User', {'Name': 'smoke', 'Password': password}, 204)
 request('/Startup/RemoteAccess', {'EnableRemoteAccess': False, 'EnableAutomaticPortMapping': False}, 204)
 request('/Startup/Complete', {}, 204)
 token = request('/Users/AuthenticateByName', {'Username': 'smoke', 'Pw': password})['AccessToken']
+plugin = next(plugin for plugin in request('/Plugins') if plugin['Id'] == '7378435d-77d2-4ef4-8e7f-c1269f624b24')
+assert plugin['Name'] == 'Jable' and plugin['Version'] == '0.1.6.0', plugin
 tasks = request('/ScheduledTasks')
 assert any(task['Key'] == 'JableCatalogSync' for task in tasks), 'scheduled task activation missing'
 options = request('/Libraries/AvailableOptions?libraryContentType=movies&isNewLibrary=true')
@@ -102,7 +104,7 @@ assert any(provider['Name'] == 'Jable' for provider in movie['ImageFetchers']), 
 request('/Jable/Catalog', expected=403)  # No selected library: controller and access service fail closed.
 request('/Jable/Status', expected=403)
 request('/Jable/Sync', {}, 403)
-print('PASS: Jellyfin 10.10.7; Page 200; unknown asset 404; menu; controller/LibraryAccessService; both providers; scheduled task; unconfigured catalog 403')
+print('PASS: Jellyfin 10.10.7; loaded Jable 0.1.6.0; Page 200; unknown asset 404; menu; controller/LibraryAccessService; both providers; scheduled task; unconfigured catalog 403')
 
 config_path = '/Plugins/7378435d-77d2-4ef4-8e7f-c1269f624b24/Configuration'
 config = request(config_path)

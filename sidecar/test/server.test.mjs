@@ -1,7 +1,52 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { once } from 'node:events';
+import { execFile as execFileCallback } from 'node:child_process';
+import { promisify } from 'node:util';
 import { createBridgeServer } from '../src/server.mjs';
+
+const execFile = promisify(execFileCallback);
+
+test('a malformed raw TCP path cannot terminate the server', async () => {
+  await execFile(process.execPath, ['--input-type=module', '--eval', `
+    import assert from 'node:assert/strict';
+    import net from 'node:net';
+    import { once } from 'node:events';
+    import { createBridgeServer } from ${JSON.stringify(new URL('../src/server.mjs', import.meta.url).href)};
+    const logs = [];
+    const server = createBridgeServer({
+      renderer: { health: async () => {} }, token: 'secret',
+      logger: { info: entry => logs.push(entry), error() {} }
+    });
+    server.listen(0, '127.0.0.1');
+    await once(server, 'listening');
+    const { port } = server.address();
+    try {
+      const raw = await new Promise((resolve, reject) => {
+        const socket = net.connect(port, '127.0.0.1');
+        const chunks = [];
+        socket.setTimeout(1000, () => socket.destroy(new Error('malformed request hung')));
+        socket.on('data', chunk => chunks.push(chunk));
+        socket.once('error', reject);
+        socket.once('close', () => resolve(Buffer.concat(chunks).toString()));
+        socket.once('connect', () => socket.write('GET //[ HTTP/1.1\\r\\nHost: bridge\\r\\nConnection: close\\r\\n\\r\\n'));
+      });
+      assert.ok(raw.length < 1024, 'error response must be bounded');
+      if (raw) {
+        assert.ok(raw.startsWith('HTTP/1.1 400 '));
+        assert.equal(JSON.parse(raw.split('\\r\\n\\r\\n')[1]).code, 'invalid_request');
+      }
+      const response = await fetch('http://127.0.0.1:' + port + '/healthz');
+      assert.equal(response.status, 200);
+      assert.equal((await response.json()).ok, true);
+      assert.equal(logs.length, 2);
+    } finally {
+      server.close();
+      server.closeAllConnections();
+      await once(server, 'close');
+    }
+  `], { timeout: 3000 });
+});
 
 async function withServer(renderer, run, logger = { info() {}, error() {} }) {
   const server = createBridgeServer({ renderer, token: 'secret', logger });
@@ -9,7 +54,7 @@ async function withServer(renderer, run, logger = { info() {}, error() {} }) {
   await once(server, 'listening');
   try {
     const { port } = server.address();
-    await run(`http://127.0.0.1:${port}`);
+    await run(`http://127.0.0.1:${port}`, server);
   } finally {
     server.close();
     server.closeAllConnections();
@@ -120,6 +165,7 @@ test('normal and interrupted requests each log once', async () => {
   const rendering = new Promise(resolve => { beginRender = resolve; });
   let releaseRender;
   const rendered = new Promise(resolve => { releaseRender = resolve; });
+  let renderSignal;
   let resolveInterruptedLog;
   const interruptedLog = new Promise(resolve => { resolveInterruptedLog = resolve; });
   const logger = { info(entry) {
@@ -128,7 +174,7 @@ test('normal and interrupted requests each log once', async () => {
   }, error() {} };
   const renderer = {
     health: async () => {},
-    render: async () => { beginRender(); return rendered; }
+    render: async (url, signal) => { renderSignal = signal; beginRender(); return rendered; }
   };
   await withServer(renderer, async base => {
     assert.equal((await fetch(`${base}/healthz`)).status, 200);
@@ -152,6 +198,7 @@ test('normal and interrupted requests each log once', async () => {
       assert.equal(entry.path, '/v1/render');
       assert.equal(typeof entry.status, 'number');
       assert.equal(typeof entry.durationMs, 'number');
+      assert.equal(renderSignal.aborted, true, 'a complete POST must abort rendering when the response closes');
     } finally {
       releaseRender({ url: 'https://jable.tv/latest-updates/', html: '<html></html>' });
       await request;
@@ -164,4 +211,43 @@ test('normal and interrupted requests each log once', async () => {
   assert.equal(typeof normal[0].status, 'number');
   assert.equal(typeof normal[0].durationMs, 'number');
   assert.equal(logs.filter(entry => entry.method === 'POST').length, 1);
+});
+
+test('a disconnected queued POST never starts rendering and each request logs once', async () => {
+  const calls = [];
+  const logs = [];
+  let beginRender;
+  const started = new Promise(resolve => { beginRender = resolve; });
+  let releaseRender;
+  const rendered = new Promise(resolve => { releaseRender = resolve; });
+  let disconnected;
+  const closed = new Promise(resolve => { disconnected = resolve; });
+  const renderer = { render: async url => {
+    calls.push(url);
+    if (url.endsWith('/first')) { beginRender(); await rendered; }
+    return { url, html: '<html>ok</html>' };
+  } };
+  await withServer(renderer, async (base, server) => {
+    const post = (path, signal) => fetch(`${base}/v1/render`, {
+      method: 'POST', headers: { authorization: 'Bearer secret' },
+      body: JSON.stringify({ url: `https://jable.tv/${path}` }), signal
+    });
+    const first = post('first');
+    await started;
+    const bodyReceived = new Promise(resolve => server.once('request', request => request.once('end', resolve)));
+    const controller = new AbortController();
+    const queued = post('queued', controller.signal).catch(() => {});
+    try {
+      await bodyReceived;
+      controller.abort();
+      await closed;
+    } finally {
+      releaseRender();
+      await Promise.all([first, queued]);
+    }
+    assert.equal((await post('last')).status, 200);
+  }, { info(entry) { logs.push(entry); disconnected(); }, error() {} });
+  assert.deepEqual(calls, ['https://jable.tv/first', 'https://jable.tv/last']);
+  assert.equal(logs.length, 3);
+  assert.equal(new Set(logs.map(entry => entry.requestId)).size, 3);
 });

@@ -31,10 +31,10 @@ async function readJson(request) {
   }
 }
 
-function requestSignal(request) {
+function requestSignal(request, response) {
   const controller = new AbortController();
   request.once('aborted', () => controller.abort());
-  request.once('close', () => { if (!request.complete) controller.abort(); });
+  response.once('close', () => { if (!response.writableFinished) controller.abort(); });
   return controller.signal;
 }
 
@@ -49,7 +49,7 @@ export function createBridgeServer({ renderer, token, logger = console }) {
   return http.createServer(async (request, response) => {
     const requestId = randomUUID();
     const startedAt = Date.now();
-    const path = new URL(request.url, 'http://bridge').pathname;
+    let path = '';
     let logged = false;
     const log = () => {
       if (logged) return;
@@ -65,8 +65,13 @@ export function createBridgeServer({ renderer, token, logger = console }) {
     response.setHeader('x-request-id', requestId);
     response.once('finish', log);
     response.once('close', log);
-    const signal = requestSignal(request);
+    const signal = requestSignal(request, response);
     try {
+      try {
+        path = new URL(request.url, 'http://bridge').pathname;
+      } catch {
+        throw Object.assign(new Error('Request path is invalid.'), { status: 400 });
+      }
       if (request.method === 'GET' && request.url === '/healthz') {
         await renderer.health(signal);
         return json(response, 200, { ok: true, browser: 'ready' });
@@ -78,7 +83,10 @@ export function createBridgeServer({ renderer, token, logger = console }) {
       const body = await readJson(request);
       if (!body || typeof body !== 'object' || Array.isArray(body) || !Object.hasOwn(body, 'url') || !isAllowedJableUrl(body.url))
         return json(response, 400, { code: 'invalid_request', message: 'Jable URL is not allowed.' });
-      const result = await serialized(() => renderer.render(body.url, signal));
+      const result = await serialized(() => {
+        signal.throwIfAborted();
+        return renderer.render(body.url, signal);
+      });
       return json(response, 200, result);
     } catch (error) {
       const timedOut = error?.name === 'TimeoutError';
