@@ -2,7 +2,10 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFile as execFileCallback } from 'node:child_process';
 import { promisify } from 'node:util';
+import { getEventListeners, once } from 'node:events';
+import { setTimeout as delay } from 'node:timers/promises';
 import { ChromiumRenderer, isAllowedJableUrl } from '../src/renderer.mjs';
+import { createBridgeServer } from '../src/server.mjs';
 
 const execFile = promisify(execFileCallback);
 
@@ -39,7 +42,7 @@ test('failed target creation clears the render timeout', async () => {
   `], { timeout: 300 });
 });
 
-function fakeTransport(page) {
+function fakeTransport(page, webSocketDebuggerUrl = 'ws://chromium/devtools/page/target-1') {
   const calls = [];
   const socketUrls = [];
   const commands = [];
@@ -47,7 +50,7 @@ function fakeTransport(page) {
     calls.push([url, options.method || 'GET']);
     if (url.includes('/json/new?')) return Response.json({
       id: 'target-1',
-      webSocketDebuggerUrl: 'ws://chromium/devtools/page/target-1'
+      webSocketDebuggerUrl
     });
     if (url.endsWith('/json/close/target-1')) return new Response('', { status: 200 });
     throw new Error(`unexpected fetch ${url}`);
@@ -123,6 +126,131 @@ test('health and render resolve the current Chromium IP for HTTP and WebSocket e
     'wss://[::1]:9443/devtools/page/target-1'
   ]);
   assert.equal(addresses.length, 0);
+});
+
+for (const [browserUrl, address, expected] of [
+  ['http://chromium:80', '172.18.0.2', 'ws://172.18.0.2/devtools/page/target-1'],
+  ['https://chromium:443', '172.18.0.2', 'wss://172.18.0.2/devtools/page/target-1'],
+  ['https://chromium:80', '172.18.0.2', 'wss://172.18.0.2:80/devtools/page/target-1'],
+  ['http://chromium:9222', '172.18.0.2', 'ws://172.18.0.2:9222/devtools/page/target-1'],
+  ['https://chromium', '2001:db8::7', 'wss://[2001:db8::7]/devtools/page/target-1'],
+  ['https://chromium:9222', '2001:db8::7', 'wss://[2001:db8::7]:9222/devtools/page/target-1']
+]) test(`WebSocket endpoint preserves configured authority for ${browserUrl} (${address})`, async () => {
+  const transport = fakeTransport(
+    { readyState: 'complete', url: 'https://jable.tv/', html: '<html>ok</html>' },
+    'ws://old-browser:9333/devtools/page/target-1'
+  );
+  const renderer = new ChromiumRenderer({
+    browserUrl, lookupImpl: async () => ({ address }),
+    fetchImpl: transport.fetchImpl, WebSocketImpl: transport.FakeSocket
+  });
+  await renderer.render('https://jable.tv/');
+  assert.deepEqual(transport.socketUrls, [expected]);
+});
+
+for (const operation of ['render timeout', 'render cancellation', 'health cancellation']) {
+  for (const lateResult of ['resolve', 'reject']) test(`DNS lookup ${operation} settles before a late ${lateResult}`, async () => {
+    const pending = Promise.withResolvers();
+    const calls = [];
+    const controller = new AbortController();
+    const reason = new DOMException('caller cancelled', 'AbortError');
+    const renderer = new ChromiumRenderer({
+      browserUrl: 'http://chromium:9222', timeoutMs: 20,
+      lookupImpl: () => pending.promise,
+      fetchImpl: async url => { calls.push(url); throw new Error('unexpected fetch after DNS cancellation'); }
+    });
+    const request = operation.startsWith('health')
+      ? renderer.health(controller.signal)
+      : renderer.render('https://jable.tv/', controller.signal);
+    const completion = request.then(value => ({ value }), error => ({ error }));
+    if (operation !== 'render timeout') controller.abort(reason);
+    try {
+      const result = await Promise.race([completion, delay(100).then(() => ({}))]);
+      assert.ok(result.error, 'DNS lookup must settle before its underlying promise');
+      if (operation === 'render timeout') assert.equal(result.error.name, 'TimeoutError');
+      else assert.equal(result.error, reason);
+      assert.equal(getEventListeners(controller.signal, 'abort').length, 0);
+      assert.deepEqual(calls, []);
+    } finally {
+      if (lateResult === 'resolve') pending.resolve({ address: '127.0.0.1' });
+      else pending.reject(new Error('late DNS failure'));
+      await completion;
+    }
+    await delay(0);
+    assert.deepEqual(calls, [], 'settled DNS must not start late network work');
+  });
+}
+
+test('DNS lookup removes its abort listener on success and failure', async () => {
+  for (const fail of [false, true]) {
+    const pending = Promise.withResolvers();
+    const controller = new AbortController();
+    const renderer = new ChromiumRenderer({ browserUrl: 'http://chromium:9222', lookupImpl: () => pending.promise });
+    const resolved = renderer.resolveBrowserUrl(controller.signal).then(url => ({ url }), error => ({ error }));
+    const reason = new Error('DNS failed');
+    try {
+      assert.equal(getEventListeners(controller.signal, 'abort').length, 1);
+    } finally {
+      if (fail) pending.reject(reason);
+      else pending.resolve({ address: '127.0.0.1' });
+    }
+    const result = await resolved;
+    if (fail) assert.equal(result.error, reason);
+    else assert.equal(result.url.origin, 'http://127.0.0.1:9222');
+    assert.equal(getEventListeners(controller.signal, 'abort').length, 0);
+  }
+});
+
+for (const operation of ['health', 'render']) test(`DNS lookup ${operation} rejects a pre-aborted caller before doing work`, async () => {
+  let lookups = 0;
+  const controller = new AbortController();
+  const reason = new DOMException('already cancelled', 'AbortError');
+  controller.abort(reason);
+  const renderer = new ChromiumRenderer({
+    browserUrl: 'http://chromium:9222',
+    lookupImpl: async () => { lookups++; throw new Error('unexpected DNS lookup'); }
+  });
+  const request = operation === 'health' ? renderer.health(controller.signal) : renderer.render('https://jable.tv/', controller.signal);
+  await assert.rejects(request, error => error === reason);
+  assert.equal(lookups, 0);
+});
+
+test('DNS lookup timeout releases the bridge renderer slot before lookup completes', async () => {
+  const pending = Promise.withResolvers();
+  const started = Promise.withResolvers();
+  let lookups = 0;
+  const transport = fakeTransport({ readyState: 'complete', url: 'https://jable.tv/', html: '<html>ok</html>' });
+  const renderer = new ChromiumRenderer({
+    browserUrl: 'http://chromium:9222', timeoutMs: 30,
+    lookupImpl: () => ++lookups === 1 ? (started.resolve(), pending.promise) : Promise.resolve({ address: '127.0.0.1' }),
+    fetchImpl: transport.fetchImpl, WebSocketImpl: transport.FakeSocket
+  });
+  const server = createBridgeServer({ renderer, token: 'secret', logger: { info() {}, error() {} } });
+  server.listen(0, '127.0.0.1');
+  await once(server, 'listening');
+  const post = () => fetch(`http://127.0.0.1:${server.address().port}/v1/render`, {
+    method: 'POST', headers: { authorization: 'Bearer secret' }, body: JSON.stringify({ url: 'https://jable.tv/' })
+  });
+  const first = post();
+  await started.promise;
+  const second = post();
+  try {
+    const timedOut = await Promise.race([first, delay(150).then(() => null)]);
+    assert.ok(timedOut, 'DNS timeout must release the queued renderer');
+    assert.equal(timedOut.status, 504);
+    assert.equal((await timedOut.json()).code, 'browser_timeout');
+    const rendered = await second;
+    assert.equal(rendered.status, 200);
+    assert.equal((await rendered.json()).html, '<html>ok</html>');
+    pending.resolve({ address: '127.0.0.2' });
+    await delay(0);
+    assert.equal(transport.calls.length, 2, 'only the second render creates and closes a target');
+  } finally {
+    pending.resolve({ address: '127.0.0.2' });
+    server.close();
+    server.closeAllConnections();
+    await Promise.all([first.catch(() => {}), second.catch(() => {}), once(server, 'close')]);
+  }
 });
 
 test('render creates a temporary target, returns complete DOM, and closes it', async () => {

@@ -64,18 +64,25 @@ export class ChromiumRenderer {
     this.timeoutMs = timeoutMs;
   }
 
-  async resolveBrowserUrl() {
+  async resolveBrowserUrl(signal) {
+    signal?.throwIfAborted();
     const url = new URL(this.browserUrl);
     const hostname = url.hostname.replace(/^\[|\]$/g, '');
     if (!isIP(hostname)) {
-      const { address } = await this.lookup(hostname);
+      let abort;
+      const { address } = await new Promise((resolve, reject) => {
+        abort = () => reject(signal.reason);
+        signal?.addEventListener('abort', abort, { once: true });
+        Promise.resolve(this.lookup(hostname)).then(resolve, reject);
+      }).finally(() => signal?.removeEventListener('abort', abort));
       url.hostname = isIP(address) === 6 ? `[${address}]` : address;
     }
+    signal?.throwIfAborted();
     return url;
   }
 
   async health(signal) {
-    const browserUrl = await this.resolveBrowserUrl();
+    const browserUrl = await this.resolveBrowserUrl(signal);
     const response = await this.fetch(`${browserUrl.origin}/json/version`, { signal });
     if (!response.ok) throw new Error(`Chromium health returned ${response.status}.`);
     const version = await response.json();
@@ -86,10 +93,10 @@ export class ChromiumRenderer {
     if (!isAllowedJableUrl(value)) throw new Error('Jable URL is not allowed.');
     const timeout = new AbortController();
     const interceptionFailure = new AbortController();
-    const timeoutTimer = setTimeout(() => timeout.abort(), this.timeoutMs);
+    const timeoutTimer = setTimeout(() => timeout.abort(new DOMException('Jable page did not finish loading.', 'TimeoutError')), this.timeoutMs);
     const combined = AbortSignal.any([timeout.signal, interceptionFailure.signal, ...(signal ? [signal] : [])]);
     try {
-      const browserUrl = await this.resolveBrowserUrl();
+      const browserUrl = await this.resolveBrowserUrl(combined);
       const created = await this.fetch(
         `${browserUrl.origin}/json/new?${encodeURIComponent('about:blank')}`,
         { method: 'PUT', signal: combined }
@@ -104,8 +111,9 @@ export class ChromiumRenderer {
       let unsafeNavigation;
       try {
         const socketUrl = new URL(target.webSocketDebuggerUrl);
-        socketUrl.host = browserUrl.host;
         socketUrl.protocol = browserUrl.protocol === 'https:' ? 'wss:' : 'ws:';
+        socketUrl.hostname = browserUrl.hostname;
+        socketUrl.port = browserUrl.port;
         cdp = connect(this.WebSocket, socketUrl.href, combined, message => {
           if (message.method === 'Fetch.requestPaused') {
             const { requestId, request, resourceType, frameId } = message.params;
